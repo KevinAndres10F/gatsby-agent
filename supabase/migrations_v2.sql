@@ -77,8 +77,10 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
 );
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_run ON backtest_trades(run_id);
 
--- ============ 5. Vista v_open_positions con soporte SHORT ============
-CREATE OR REPLACE VIEW v_open_positions AS
+-- ============ 5. Vista v_open_positions con soporte SHORT + user_id ============
+-- Usamos DROP + CREATE porque CREATE OR REPLACE VIEW no permite reordenar columnas.
+DROP VIEW IF EXISTS v_open_positions;
+CREATE VIEW v_open_positions AS
 SELECT
   t.id,
   t.ticker,
