@@ -71,9 +71,17 @@ CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id);
 CREATE INDEX IF NOT EXISTS idx_signals_user ON signals(user_id);
 
 -- equity_snapshots ya tenía PK (date). Lo cambiamos a (user_id, date) para multi-user.
+-- PostgreSQL no admite expresiones en PRIMARY KEY → usamos un UUID sentinel
+-- '00000000-0000-0000-0000-000000000000' para el modo single-user.
+UPDATE equity_snapshots
+   SET user_id = '00000000-0000-0000-0000-000000000000'::uuid
+ WHERE user_id IS NULL;
+ALTER TABLE equity_snapshots
+  ALTER COLUMN user_id SET DEFAULT '00000000-0000-0000-0000-000000000000'::uuid;
+ALTER TABLE equity_snapshots ALTER COLUMN user_id SET NOT NULL;
 ALTER TABLE equity_snapshots DROP CONSTRAINT IF EXISTS equity_snapshots_pkey;
 ALTER TABLE equity_snapshots
-  ADD CONSTRAINT equity_snapshots_pkey PRIMARY KEY (date, COALESCE(user_id, '00000000-0000-0000-0000-000000000000'::uuid));
+  ADD CONSTRAINT equity_snapshots_pkey PRIMARY KEY (user_id, date);
 
 -- ---------- 4. Vista de open positions con user_id ----------
 CREATE OR REPLACE VIEW v_open_positions AS

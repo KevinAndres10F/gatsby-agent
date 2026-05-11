@@ -5,21 +5,27 @@
  * y comparación contra benchmark (SPY).
  */
 
-import { getSupabase } from './_shared/supabase.ts';
+import {
+  getSupabase,
+  getUserIdFromRequest,
+  SINGLE_USER_ID,
+} from './_shared/supabase.ts';
 import {
   computeAdvancedMetrics,
   compareToBenchmark,
   type EquityPoint,
 } from './_shared/metrics.ts';
 
-export default async () => {
+export default async (req: Request) => {
   const supabase = getSupabase();
+  const userId = (await getUserIdFromRequest(req)) ?? SINGLE_USER_ID;
 
   const [perfRes, equityRes, recentTradesRes, benchRes] = await Promise.all([
     supabase.from('v_performance').select('*').single(),
     supabase
       .from('equity_snapshots')
       .select('date, total_value, daily_pnl_pct')
+      .eq('user_id', userId)
       .order('date', { ascending: true })
       .limit(365),
     supabase

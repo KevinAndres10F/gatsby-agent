@@ -6,7 +6,12 @@
  */
 
 import type { Config } from '@netlify/functions';
-import { getSupabase, logRunStart, logRunComplete } from './_shared/supabase.ts';
+import {
+  getSupabase,
+  logRunStart,
+  logRunComplete,
+  SINGLE_USER_ID,
+} from './_shared/supabase.ts';
 import { getDailyHistory } from './_shared/alphavantage.ts';
 
 export const config: Config = {
@@ -83,28 +88,33 @@ export default async () => {
     const cash = pf?.cash ?? 0;
     const totalValue = cash + positionsValue;
 
-    // Calcular daily P&L vs snapshot anterior
+    // Calcular daily P&L vs snapshot anterior (mismo "usuario" = sentinel)
     const { data: prev } = await supabase
       .from('equity_snapshots')
       .select('total_value')
+      .eq('user_id', SINGLE_USER_ID)
       .lt('date', today)
       .order('date', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     const dailyPnlPct =
       prev?.total_value && prev.total_value > 0
         ? ((totalValue - prev.total_value) / prev.total_value) * 100
         : 0;
 
-    await supabase.from('equity_snapshots').upsert({
-      date: today,
-      cash,
-      positions_value: positionsValue,
-      total_value: totalValue,
-      num_open_positions: openTrades?.length ?? 0,
-      daily_pnl_pct: dailyPnlPct,
-    });
+    await supabase.from('equity_snapshots').upsert(
+      {
+        user_id: SINGLE_USER_ID,
+        date: today,
+        cash,
+        positions_value: positionsValue,
+        total_value: totalValue,
+        num_open_positions: openTrades?.length ?? 0,
+        daily_pnl_pct: dailyPnlPct,
+      },
+      { onConflict: 'user_id,date' },
+    );
 
     // Refrescar benchmark (SPY) para comparativa en /performance
     const benchmarkRows = await refreshBenchmark(supabase);

@@ -1,5 +1,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+// UUID sentinel para snapshots/registros del modo single-user (sin auth).
+// equity_snapshots tiene PK (user_id, date) que no admite NULL.
+export const SINGLE_USER_ID = '00000000-0000-0000-0000-000000000000';
+
 let _client: SupabaseClient | null = null;
 
 export function getSupabase(): SupabaseClient {

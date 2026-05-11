@@ -5,11 +5,12 @@
  * Si no, opera en modo single-user (user_id IS NULL).
  */
 
-import { getSupabase, getUserIdFromRequest } from './_shared/supabase.ts';
+import { getSupabase, getUserIdFromRequest, SINGLE_USER_ID } from './_shared/supabase.ts';
 
 export default async (req: Request) => {
   const supabase = getSupabase();
   const userId = await getUserIdFromRequest(req);
+  const equityUserId = userId ?? SINGLE_USER_ID;
 
   // Portfolio scope
   let pfQuery = supabase.from('portfolio').select('*').order('id').limit(1);
@@ -20,13 +21,13 @@ export default async (req: Request) => {
   posQuery = userId ? posQuery.eq('user_id', userId) : posQuery.is('user_id', null);
   const openRes = await posQuery;
 
-  let eqQuery = supabase
+  const equityRes = await supabase
     .from('equity_snapshots')
     .select('*')
+    .eq('user_id', equityUserId)
     .order('date', { ascending: false })
-    .limit(1);
-  eqQuery = userId ? eqQuery.eq('user_id', userId) : eqQuery.is('user_id', null);
-  const equityRes = await eqQuery.maybeSingle();
+    .limit(1)
+    .maybeSingle();
 
   const portfolio = pfRes.data;
   const positions = openRes.data ?? [];
