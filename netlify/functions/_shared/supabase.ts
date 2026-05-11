@@ -20,6 +20,26 @@ export function getSupabase(): SupabaseClient {
 }
 
 /**
+ * Extrae el user_id (auth.uid()) del JWT enviado en el header Authorization.
+ * Devuelve null si no hay token o es inválido. NO arroja error: las funciones
+ * que llaman deciden si requieren auth o aceptan modo single-user.
+ */
+export async function getUserIdFromRequest(req: Request): Promise<string | null> {
+  const auth = req.headers.get('Authorization') ?? req.headers.get('authorization');
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  const token = auth.slice('Bearer '.length).trim();
+  if (!token) return null;
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data?.user) return null;
+    return data.user.id;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Registra el inicio de una función para observabilidad.
  * Devuelve el ID del run para poder completarlo después.
  */

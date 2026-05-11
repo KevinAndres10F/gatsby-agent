@@ -11,12 +11,12 @@ Agente cuantitativo autónomo que descubre oportunidades de trading swing en US 
 Cada día hábil, el agente:
 
 1. **Descubre** (06:00 ET) — Pull de top movers del mercado US, filtra por liquidez y movimiento razonable, busca catalizadores noticiosos. ~25 candidatos.
-2. **Analiza** (06:15 ET) — Para cada candidato con noticia, calcula RSI/ATR/SMAs y manda todo a Claude para análisis estructurado de sentimiento + señal.
-3. **Genera señales** — Top 5 señales del día con: dirección (LONG/SHORT/HOLD), score 0–100, convicción (HIGH/MEDIUM/LOW), entry/stop/target, sizing por ATR, y rationale en español.
-4. **Mark-to-market** (cada 2h durante mercado) — Actualiza precios de posiciones abiertas, cierra automáticamente si tocan stop o target.
-5. **End-of-day** (16:30 ET) — Snapshot diario para curva de equity.
+2. **Analiza** (06:15 ET) — Para cada candidato con noticia, calcula RSI/ATR/SMAs y manda todo a Claude para análisis estructurado de sentimiento + señal. Con caché de precios para evitar refetch innecesarios.
+3. **Genera señales** — Top 5 señales del día con dirección (LONG/SHORT/HOLD), score 0–100, convicción (HIGH/MEDIUM/LOW), entry/stop/target, sizing por ATR, y rationale en español. Notifica HIGH conviction por Telegram (si está configurado).
+4. **Mark-to-market** (cada 2h durante mercado) — Actualiza precios de posiciones abiertas, cierra automáticamente si tocan stop o target y envía aviso a Telegram.
+5. **End-of-day** (17:30 ET) — Snapshot diario para curva de equity y refresco del benchmark (SPY).
 
-Tú decides desde el dashboard cuáles paper-tradear. Si después de unas semanas el `hit_rate` y P&L acumulado son positivos → tienes evidencia de edge antes de arriesgar capital real.
+Tú decides desde el dashboard cuáles paper-tradear. Si después de unas semanas el `hit_rate`, P&L acumulado, **Sharpe**, **Sortino** y **alpha vs SPY** son positivos → tienes evidencia de edge antes de arriesgar capital real.
 
 ---
 
@@ -26,9 +26,10 @@ Tú decides desde el dashboard cuáles paper-tradear. Si después de unas semana
 |------|------------|
 | Frontend | Vite + React 18 + TypeScript + Tailwind + Recharts |
 | Backend | Netlify Functions (Scheduled + HTTP), TypeScript |
-| Database | Supabase Postgres (free tier, 500MB) |
-| LLM | Claude Sonnet 4.5 (Anthropic API) |
-| Datos de mercado | Alpha Vantage (top movers + history) + Finnhub (noticias + quotes) |
+| Database | Supabase Postgres (free tier, 500MB) + Auth |
+| LLM | Claude Sonnet 4.6 (Anthropic API) |
+| Datos de mercado | Alpha Vantage (top movers + history + SPY) + Finnhub (noticias + quotes) |
+| Notificaciones | Telegram Bot API (opcional) |
 
 **Costo mensual estimado:** ~$1–2 (solo la API de Claude; el resto es free tier).
 
@@ -51,18 +52,20 @@ git push -u origin main
 ### 2. Crear proyecto Supabase
 
 1. Ve a https://supabase.com → New project (free tier)
-2. Anota la `Project URL` y `service_role` key (Settings → API)
+2. Anota la `Project URL`, la `anon` key (para frontend) y la `service_role` key (para backend). En Settings → API.
 3. Abre el SQL Editor y ejecuta **en este orden**:
-   - `supabase/schema.sql` (crea todas las tablas, vistas e índices)
-   - `supabase/seed_universe.sql` (inserta ~120 tickers iniciales)
+   - `supabase/schema.sql` — tablas, vistas e índices base
+   - `supabase/seed_universe.sql` — ~120 tickers iniciales
+   - `supabase/migrations_v2.sql` — fase 2: benchmark, backtest, multi-usuario + RLS
 
 ### 3. Conseguir API keys gratis
 
 | Servicio | URL | Free tier |
 |----------|-----|-----------|
 | Anthropic | console.anthropic.com | $5 trial credit |
-| Alpha Vantage | alphavantage.co/support/#api-key | 25 req/día (suficiente) |
+| Alpha Vantage | alphavantage.co/support/#api-key | 25 req/día, 5 req/min |
 | Finnhub | finnhub.io/register | 60 req/min |
+| Telegram (opcional) | crea bot con @BotFather | gratis |
 
 ### 4. Conectar a Netlify
 
@@ -71,25 +74,38 @@ git push -u origin main
 3. **Site settings → Environment variables**, añade:
 
 ```
+# Backend (todas)
 ANTHROPIC_API_KEY=sk-ant-...
 SUPABASE_URL=https://xxxxx.supabase.co
-SUPABASE_SERVICE_KEY=eyJ...   # service_role
-VITE_SUPABASE_URL=https://xxxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...   # anon (mismo proyecto)
+SUPABASE_SERVICE_KEY=eyJ...   # service_role (bypassea RLS)
 ALPHA_VANTAGE_KEY=...
 FINNHUB_KEY=...
+
+# Frontend (Vite)
+VITE_SUPABASE_URL=https://xxxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ...   # anon (mismo proyecto)
+
+# Telegram (opcional — si no se setean, las notificaciones son no-op)
+TELEGRAM_BOT_TOKEN=123:ABC...
+TELEGRAM_CHAT_ID=-100123...      # tu chat o canal
 ```
 
 4. Trigger un deploy. Las **Scheduled Functions** se registran automáticamente.
 
-### 5. Verificación
+### 5. Habilitar Email Auth en Supabase
+
+1. Supabase → Authentication → Providers → habilita **Email**.
+2. (Opcional) Authentication → Settings → desactiva "Confirm email" durante desarrollo.
+3. La primera vez que cualquier usuario se registre desde `/login`, un trigger crea su `portfolio` inicial automáticamente (ver `migrations_v2.sql`).
+
+> Si NO defines `VITE_SUPABASE_ANON_KEY`, el frontend opera en modo single-user (sin login). Es retrocompatible con el MVP original.
+
+### 6. Verificación
 
 Después del primer deploy, en Netlify → Functions, deberías ver:
-- `discovery` (scheduled)
-- `analyze` (scheduled)
-- `update-prices` (scheduled)
-- `end-of-day` (scheduled)
-- `api-signals`, `api-portfolio`, `api-performance`, `api-execute`, `api-close-trade`
+- `discovery`, `analyze`, `update-prices`, `end-of-day` (scheduled)
+- `api-signals`, `api-portfolio`, `api-performance`, `api-execute`, `api-close-trade`, `api-backtest-runs`
+- `backtest` (HTTP, on-demand)
 
 Para probar manualmente sin esperar al cron:
 
@@ -109,9 +125,50 @@ Después de unos minutos, abre el dashboard. Deberías ver señales pobladas en 
 | `discovery` | `0 11 * * 1-5` | L–V 06:00 ET (EST) / 07:00 ET (EDT) |
 | `analyze` | `15 11 * * 1-5` | L–V 06:15 ET |
 | `update-prices` | `0 14,16,18,20 * * 1-5` | cada 2h durante mercado |
-| `end-of-day` | `30 21 * * 1-5` | L–V 16:30 ET (post-cierre) |
+| `end-of-day` | `30 21 * * 1-5` | L–V 17:30 ET (EDT) · also refreshes SPY benchmark |
 
 > Netlify Scheduled Functions corren siempre en UTC. Si quieres ajustar a tu zona, edita `netlify.toml`.
+
+---
+
+## Features de fase 2 (implementadas)
+
+### Métricas avanzadas (`/performance`)
+- **Sharpe ratio** anualizado con rf 4% diario
+- **Sortino ratio** (penaliza solo el downside)
+- **Calmar ratio** = CAGR / |max drawdown|
+- **Max drawdown %** peor caída desde un peak previo
+- **Volatilidad anualizada** y **CAGR**
+
+### Benchmark vs SPY (`/performance`)
+- `end-of-day` refresca el histórico de SPY en `benchmark_prices`
+- Chart comparativo (base 100) y cálculo de **alpha**
+
+### Backtesting (`/backtest`)
+- Función `netlify/functions/backtest.ts` que corre una estrategia técnica (SMA20 cross-up + RSI + tendencia) sobre 2+ años de data Alpha Vantage
+- UI para ejecutar runs ad-hoc, configurando tickers y período
+- Persiste cada run y sus trades en `backtest_runs` / `backtest_trades`
+- Devuelve hit rate, retorno, Sharpe/Sortino y max drawdown
+
+### Notificaciones Telegram
+- HIGH conviction signals → `analyze` te envía el resumen al canal
+- Trades cerrados por stop/target → `update-prices` te avisa
+- Si no configuras `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, son no-op silenciosos
+
+### Multi-usuario (Supabase Auth)
+- Email + password con Supabase Auth
+- Cada usuario tiene su propio portfolio y trades (RLS habilitado)
+- Trigger crea `portfolio` inicial al sign-up
+- El frontend muestra `/login` cuando hay auth habilitada y no hay sesión
+- Las **señales son globales** (todos los usuarios ven las mismas, pero cada uno ejecuta en su propio portfolio)
+
+### Caché de precios y batch updates
+- `analyze` reutiliza precios cacheados en Supabase si ya tienes la vela del día → reduce el tiempo total de ~5 min a ~30 s en runs siguientes
+- Update de noticias en un solo upsert (en vez de N updates secuenciales)
+
+### Soporte SHORT en risk.ts
+- `planShortTrade` / `planTrade(direction, ...)` con stop/target invertidos
+- La vista `v_open_positions` calcula P&L flotante correctamente para SHORT
 
 ---
 
@@ -125,13 +182,14 @@ Después de unos minutos, abre el dashboard. Deberías ver señales pobladas en 
    │  discovery (cron 11:00)  │ ─────────────► │  candidates + news (DB)  │
    └──────────────────────────┘                └──────────────────────────┘
                                                             │
-            [Alpha Vantage TIME_SERIES_DAILY]               │
+            [Alpha Vantage TIME_SERIES_DAILY] (con cache)   │
                           │                                 ▼
                           ▼                       ┌──────────────────────┐
                 ┌──────────────────────┐          │ analyze (cron 11:15) │
                 │ indicators.ts (RSI,  │ ────────►│  → Claude API        │
                 │ ATR, SMA20/50/200)   │          │  → signals (DB)      │
-                └──────────────────────┘          └──────────────────────┘
+                └──────────────────────┘          │  → Telegram (HIGH)   │
+                                                  └──────────────────────┘
                                                             │
                                                             ▼
                                                   ┌──────────────────┐
@@ -150,7 +208,8 @@ Después de unos minutos, abre el dashboard. Deberías ver señales pobladas en 
                 ┌──────────────────────┐         ┌──────────────────────┐
                 │ update-prices (2h)   │         │  end-of-day (21:30)  │
                 │  Finnhub quotes      │         │  equity snapshot     │
-                │  auto-close stops    │         └──────────────────────┘
+                │  auto-close stops    │         │  + refresh SPY       │
+                │  → Telegram (close)  │         └──────────────────────┘
                 └──────────────────────┘
 ```
 
@@ -169,8 +228,10 @@ Para responderla, deja correr el sistema **al menos 4 semanas** acumulando trade
 | Total trades cerrados | ≥ 30 (significancia estadística básica) |
 | Hit rate | ≥ 45% |
 | P&L promedio por trade | > 0% (con R:R ≥ 1.5, hasta 40% hit rate puede ser rentable) |
-| Drawdown máximo | < 15% del capital inicial |
-| P&L acumulado | > 0% |
+| Sharpe ratio | ≥ 1.0 |
+| Sortino ratio | ≥ 1.5 |
+| Max drawdown | > -15% del capital inicial |
+| Alpha vs SPY | > 0% |
 
 Si esos números son positivos durante un período representativo (incluyendo distintos regímenes de mercado), entonces tiene sentido considerar capital real **muy gradualmente**.
 
@@ -182,32 +243,40 @@ Si esos números son positivos durante un período representativo (incluyendo di
 cuantitativo-agent/
 ├── netlify.toml                     # config + crons
 ├── supabase/
-│   ├── schema.sql                   # tablas, vistas, índices
-│   └── seed_universe.sql            # ~120 tickers iniciales
+│   ├── schema.sql                   # tablas, vistas, índices base
+│   ├── seed_universe.sql            # ~120 tickers iniciales
+│   └── migrations_v2.sql            # fase 2: benchmark, backtest, auth + RLS
 ├── netlify/functions/
 │   ├── _shared/                     # libs reutilizables
-│   │   ├── supabase.ts              # cliente DB + observability
+│   │   ├── supabase.ts              # cliente DB + auth helper
 │   │   ├── claude.ts                # wrapper Anthropic + prompts
 │   │   ├── alphavantage.ts          # precios + top movers
 │   │   ├── finnhub.ts               # noticias + quotes
 │   │   ├── indicators.ts            # RSI / ATR / SMA en TS puro
-│   │   └── risk.ts                  # position sizing por ATR
+│   │   ├── risk.ts                  # sizing por ATR (LONG + SHORT)
+│   │   ├── metrics.ts               # Sharpe/Sortino/Calmar/MaxDD/benchmark
+│   │   └── telegram.ts              # notificaciones bot
 │   ├── discovery.ts                 # cron — descubre candidatos
-│   ├── analyze.ts                   # cron — LLM + señales
-│   ├── update-prices.ts             # cron — mark-to-market
-│   ├── end-of-day.ts                # cron — equity snapshot
+│   ├── analyze.ts                   # cron — LLM + señales (con cache)
+│   ├── update-prices.ts             # cron — mark-to-market + auto-close
+│   ├── end-of-day.ts                # cron — equity snapshot + SPY refresh
+│   ├── backtest.ts                  # HTTP — backtesting histórico
 │   ├── api-signals.ts               # GET /api/signals
-│   ├── api-portfolio.ts             # GET /api/portfolio
-│   ├── api-performance.ts           # GET /api/performance
+│   ├── api-portfolio.ts             # GET /api/portfolio (multi-user)
+│   ├── api-performance.ts           # GET /api/performance (con advanced + benchmark)
 │   ├── api-execute.ts               # POST /api/execute
-│   └── api-close-trade.ts           # POST /api/close-trade
+│   ├── api-close-trade.ts           # POST /api/close-trade
+│   └── api-backtest-runs.ts         # POST /api/backtest-runs
 ├── src/                             # frontend React
 │   ├── App.tsx
 │   ├── main.tsx
 │   ├── index.css
-│   ├── lib/api.ts                   # cliente HTTP + tipos
+│   ├── lib/
+│   │   ├── api.ts                   # fetch client (con auth header)
+│   │   ├── supabase.ts              # cliente JS supabase (anon)
+│   │   └── auth.tsx                 # AuthProvider + useAuth hook
 │   ├── components/
-│   │   ├── Sidebar.tsx
+│   │   ├── Sidebar.tsx              # nav + sign out
 │   │   ├── Header.tsx
 │   │   ├── StatCard.tsx
 │   │   └── SignalCard.tsx
@@ -215,7 +284,9 @@ cuantitativo-agent/
 │       ├── Dashboard.tsx
 │       ├── Signals.tsx
 │       ├── Portfolio.tsx
-│       └── Performance.tsx
+│       ├── Performance.tsx          # equity + advanced + benchmark
+│       ├── Backtest.tsx             # ejecutar runs históricos
+│       └── Login.tsx                # email/password auth
 ├── docs/
 │   └── prompt_v2.md                 # decisiones de prompt engineering
 └── README.md
@@ -232,20 +303,23 @@ cuantitativo-agent/
 | `discovery.ts` | `MIN_MOVE_PCT` / `MAX_MOVE_PCT` | 1.5 / 20 | Banda de movimiento |
 | `analyze.ts` | `TOP_N_FINAL_SIGNALS` | 5 | Señales finales por día |
 | `analyze.ts` | `MIN_LLM_CONFIDENCE` | 0.4 | Filtro de confidence |
+| `analyze.ts` | `ALPHA_VANTAGE_THROTTLE_MS` | 12_500 | Pausa entre pulls de Alpha Vantage |
 | `risk.ts` | `risk_pct` | 1.0 | % capital por trade |
 | `risk.ts` | `atr_multiplier_stop` | 1.5 | Stop = 1.5×ATR |
 | `risk.ts` | `atr_multiplier_target` | 2.5 | Target = 2.5×ATR |
+| `metrics.ts` | `RF_DAILY` (rf 4%) | ~1.59 bp | Risk-free para Sharpe |
+| `backtest.ts` | `max_hold_days` | 15 | Forzar salida por tiempo |
 
 ---
 
-## Próximos pasos (fase 2)
+## Roadmap futuro
 
-- [ ] Notificaciones a Telegram cuando hay señal HIGH conviction
-- [ ] Backtesting histórico con datos de 2+ años
-- [ ] Métricas avanzadas: Sharpe, Sortino, Calmar, max drawdown
-- [ ] Auth de Supabase para soportar multi-usuario
-- [ ] Comparativa contra benchmark (SPY)
-- [ ] Alertas por correo cuando se cierra un trade
+- [ ] Backtesting que use **señales del LLM** (no solo técnico)
+- [ ] Comparativa multi-régimen (bull/bear/sideways) en `/performance`
+- [ ] Alertas por correo (Resend/SendGrid) al cerrar trade
+- [ ] Trailing stops
+- [ ] Position scaling (pyramiding)
+- [ ] Backfilling histórico de equity para usuarios nuevos
 
 ---
 

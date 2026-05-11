@@ -7,10 +7,49 @@
 
 import type { Config } from '@netlify/functions';
 import { getSupabase, logRunStart, logRunComplete } from './_shared/supabase.ts';
+import { getDailyHistory } from './_shared/alphavantage.ts';
 
 export const config: Config = {
   schedule: '30 21 * * 1-5',
 };
+
+const BENCHMARK_TICKER = 'SPY';
+
+async function refreshBenchmark(
+  supabase: ReturnType<typeof getSupabase>,
+): Promise<number> {
+  const { data: last } = await supabase
+    .from('benchmark_prices')
+    .select('date')
+    .eq('ticker', BENCHMARK_TICKER)
+    .order('date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (last?.date === today) return 0;
+
+  try {
+    const bars = await getDailyHistory(BENCHMARK_TICKER, 'compact');
+    if (bars.length === 0) return 0;
+    const rows = bars.map((b) => ({
+      ticker: BENCHMARK_TICKER,
+      date: b.date,
+      close: b.close,
+    }));
+    const { error } = await supabase
+      .from('benchmark_prices')
+      .upsert(rows, { onConflict: 'ticker,date' });
+    if (error) {
+      console.error('[end-of-day] benchmark upsert failed:', error.message);
+      return 0;
+    }
+    return rows.length;
+  } catch (e: any) {
+    console.error('[end-of-day] benchmark fetch failed:', e.message);
+    return 0;
+  }
+}
 
 export default async () => {
   const runId = await logRunStart('end-of-day');
@@ -67,13 +106,25 @@ export default async () => {
       daily_pnl_pct: dailyPnlPct,
     });
 
+    // Refrescar benchmark (SPY) para comparativa en /performance
+    const benchmarkRows = await refreshBenchmark(supabase);
+
     await logRunComplete(runId, 'success', {
       records_processed: 1,
-      metadata: { total_value: totalValue, daily_pnl_pct: dailyPnlPct },
+      metadata: {
+        total_value: totalValue,
+        daily_pnl_pct: dailyPnlPct,
+        benchmark_rows: benchmarkRows,
+      },
     });
 
     return new Response(
-      JSON.stringify({ ok: true, total_value: totalValue, daily_pnl_pct: dailyPnlPct }),
+      JSON.stringify({
+        ok: true,
+        total_value: totalValue,
+        daily_pnl_pct: dailyPnlPct,
+        benchmark_rows: benchmarkRows,
+      }),
     );
   } catch (err: any) {
     console.error('[end-of-day] FATAL:', err);

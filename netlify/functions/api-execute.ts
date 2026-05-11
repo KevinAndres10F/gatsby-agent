@@ -9,7 +9,7 @@
  * 4. Marca la señal como executed
  */
 
-import { getSupabase } from './_shared/supabase.ts';
+import { getSupabase, getUserIdFromRequest } from './_shared/supabase.ts';
 
 export default async (req: Request) => {
   if (req.method !== 'POST') {
@@ -29,6 +29,7 @@ export default async (req: Request) => {
   }
 
   const supabase = getSupabase();
+  const userId = await getUserIdFromRequest(req);
 
   // 1. Cargar señal
   const { data: signal, error: sErr } = await supabase
@@ -44,13 +45,10 @@ export default async (req: Request) => {
     return new Response(JSON.stringify({ error: 'Signal already executed' }), { status: 409 });
   }
 
-  // 2. Calcular shares basado en position_size_pct y portfolio
-  const { data: pf, error: pErr } = await supabase
-    .from('portfolio')
-    .select('*')
-    .order('id')
-    .limit(1)
-    .single();
+  // 2. Calcular shares basado en position_size_pct y portfolio del usuario
+  let pfQuery = supabase.from('portfolio').select('*').order('id').limit(1);
+  pfQuery = userId ? pfQuery.eq('user_id', userId) : pfQuery.is('user_id', null);
+  const { data: pf, error: pErr } = await pfQuery.single();
   if (pErr || !pf) {
     return new Response(JSON.stringify({ error: 'Portfolio not found' }), { status: 500 });
   }
@@ -67,12 +65,13 @@ export default async (req: Request) => {
     return new Response(JSON.stringify({ error: 'Insufficient cash' }), { status: 400 });
   }
 
-  // 3. Insertar trade
+  // 3. Insertar trade (scoped por user_id)
   const { data: trade, error: tErr } = await supabase
     .from('trades')
     .insert({
       signal_id: signal.id,
       portfolio_id: pf.id,
+      user_id: userId,
       ticker: signal.ticker,
       direction: signal.direction,
       status: 'OPEN',

@@ -1,16 +1,28 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Activity, Briefcase, TrendingUp, Menu, X } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Activity,
+  Briefcase,
+  TrendingUp,
+  Menu,
+  X,
+  History,
+  LogOut,
+} from 'lucide-react';
+import { useAuth } from '../lib/auth';
 
 const items = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/signals', label: 'Señales', icon: Activity },
   { to: '/portfolio', label: 'Portfolio', icon: Briefcase },
   { to: '/performance', label: 'Performance', icon: TrendingUp },
+  { to: '/backtest', label: 'Backtest', icon: History },
 ];
 
 export default function Sidebar() {
   const [open, setOpen] = useState(false);
+  const { user, authEnabled, signOut } = useAuth();
 
   return (
     <>
@@ -83,8 +95,8 @@ export default function Sidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-bg-border text-2xs text-fg-subtle">
-          <div className="flex justify-between mb-1">
+        <div className="p-4 border-t border-bg-border text-2xs text-fg-subtle space-y-1.5">
+          <div className="flex justify-between">
             <span>system</span>
             <span className="text-bull">● online</span>
           </div>
@@ -92,6 +104,23 @@ export default function Sidebar() {
             <span>mode</span>
             <span className="text-amber-glow">paper</span>
           </div>
+          {authEnabled && user && (
+            <>
+              <div className="flex justify-between truncate gap-2">
+                <span>user</span>
+                <span className="text-fg-muted truncate" title={user.email ?? ''}>
+                  {user.email?.split('@')[0] ?? '—'}
+                </span>
+              </div>
+              <button
+                onClick={() => signOut()}
+                className="w-full flex items-center justify-between mt-2 px-2 py-1.5 rounded hover:bg-bg-surface text-fg-muted hover:text-fg transition-colors"
+              >
+                <span>sign out</span>
+                <LogOut size={12} />
+              </button>
+            </>
+          )}
         </div>
       </aside>
     </>

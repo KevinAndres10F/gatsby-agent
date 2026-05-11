@@ -28,15 +28,11 @@ const DEFAULT_PARAMS: RiskParams = {
   atr_multiplier_target: 2.5,
 };
 
-/**
- * Calcula plan de trade para LONG.
- * - stop_loss = entry - 1.5 * ATR
- * - shares = (capital * risk%) / (entry - stop_loss)
- */
-export function planLongTrade(
+function buildPlan(
+  side: 'LONG' | 'SHORT',
   entryPrice: number,
   atr14: number,
-  params: Partial<RiskParams> = {},
+  params: Partial<RiskParams>,
 ): TradePlan | null {
   const p = { ...DEFAULT_PARAMS, ...params };
   if (!atr14 || atr14 <= 0 || entryPrice <= 0) return null;
@@ -44,30 +40,25 @@ export function planLongTrade(
   const stopDistance = p.atr_multiplier_stop * atr14;
   const targetDistance = p.atr_multiplier_target * atr14;
 
-  const stopLoss = entryPrice - stopDistance;
-  const takeProfit = entryPrice + targetDistance;
+  const stopLoss =
+    side === 'LONG' ? entryPrice - stopDistance : entryPrice + stopDistance;
+  const takeProfit =
+    side === 'LONG' ? entryPrice + targetDistance : entryPrice - targetDistance;
+
+  if (takeProfit <= 0 || stopLoss <= 0) return null;
 
   const riskUsd = (p.capital * p.risk_pct) / 100;
-  const shares = Math.floor(riskUsd / stopDistance);
-
+  let shares = Math.floor(riskUsd / stopDistance);
   if (shares <= 0) return null;
 
-  const capitalUsed = shares * entryPrice;
-  // No exceder el capital disponible
+  let capitalUsed = shares * entryPrice;
   if (capitalUsed > p.capital) {
-    const cappedShares = Math.floor(p.capital / entryPrice);
-    if (cappedShares <= 0) return null;
-    return {
-      entry_price: entryPrice,
-      stop_loss: stopLoss,
-      take_profit: takeProfit,
-      shares: cappedShares,
-      capital_used: cappedShares * entryPrice,
-      risk_usd: cappedShares * stopDistance,
-      risk_pct_of_capital: ((cappedShares * stopDistance) / p.capital) * 100,
-      rr_ratio: targetDistance / stopDistance,
-    };
+    shares = Math.floor(p.capital / entryPrice);
+    if (shares <= 0) return null;
+    capitalUsed = shares * entryPrice;
   }
+
+  const effectiveRisk = shares * stopDistance;
 
   return {
     entry_price: entryPrice,
@@ -75,8 +66,33 @@ export function planLongTrade(
     take_profit: takeProfit,
     shares,
     capital_used: capitalUsed,
-    risk_usd: riskUsd,
-    risk_pct_of_capital: p.risk_pct,
+    risk_usd: effectiveRisk,
+    risk_pct_of_capital: (effectiveRisk / p.capital) * 100,
     rr_ratio: targetDistance / stopDistance,
   };
+}
+
+export function planLongTrade(
+  entryPrice: number,
+  atr14: number,
+  params: Partial<RiskParams> = {},
+): TradePlan | null {
+  return buildPlan('LONG', entryPrice, atr14, params);
+}
+
+export function planShortTrade(
+  entryPrice: number,
+  atr14: number,
+  params: Partial<RiskParams> = {},
+): TradePlan | null {
+  return buildPlan('SHORT', entryPrice, atr14, params);
+}
+
+export function planTrade(
+  direction: 'LONG' | 'SHORT',
+  entryPrice: number,
+  atr14: number,
+  params: Partial<RiskParams> = {},
+): TradePlan | null {
+  return buildPlan(direction, entryPrice, atr14, params);
 }

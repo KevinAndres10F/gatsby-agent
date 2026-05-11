@@ -1,16 +1,27 @@
 // Helper de fetch para los endpoints de Netlify Functions
+import { supabase, AUTH_ENABLED } from './supabase';
+
 const BASE = '/api';
 
+async function authHeaders(): Promise<Record<string, string>> {
+  if (!AUTH_ENABLED) return {};
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}/${path}`);
+  const headers = await authHeaders();
+  const res = await fetch(`${BASE}/${path}`, { headers });
   if (!res.ok) throw new Error(`API ${path} ${res.status}`);
   return res.json();
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const auth = await authHeaders();
   const res = await fetch(`${BASE}/${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...auth },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -66,6 +77,23 @@ export interface PortfolioState {
   positions: Position[];
 }
 
+export interface AdvancedMetrics {
+  sharpe: number | null;
+  sortino: number | null;
+  calmar: number | null;
+  max_drawdown_pct: number | null;
+  volatility_annual_pct: number | null;
+  cagr_pct: number | null;
+  days_observed: number;
+}
+
+export interface BenchmarkComparison {
+  series: { date: string; strategy: number; benchmark: number }[];
+  strategy_return_pct: number;
+  benchmark_return_pct: number;
+  alpha_pct: number;
+}
+
 export interface Performance {
   performance: {
     total_trades: number;
@@ -75,8 +103,30 @@ export interface Performance {
     total_pnl_usd: number;
     hit_rate_pct: number;
   };
+  advanced: AdvancedMetrics;
   equity_curve: { date: string; total_value: number; daily_pnl_pct: number }[];
+  benchmark: BenchmarkComparison | null;
   recent_closed_trades: any[];
+}
+
+export interface BacktestRun {
+  id: number;
+  started_at: string;
+  completed_at: string | null;
+  status: 'running' | 'success' | 'error';
+  from_date: string;
+  to_date: string;
+  tickers_count: number;
+  total_trades: number | null;
+  winning_trades: number | null;
+  losing_trades: number | null;
+  hit_rate_pct: number | null;
+  total_pnl_usd: number | null;
+  total_return_pct: number | null;
+  max_drawdown_pct: number | null;
+  sharpe: number | null;
+  sortino: number | null;
+  params: any;
 }
 
 // =============== Format utils ===============
