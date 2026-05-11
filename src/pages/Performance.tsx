@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import {
-  LineChart,
   Line,
   XAxis,
   YAxis,
@@ -10,8 +9,9 @@ import {
   ReferenceLine,
   Area,
   ComposedChart,
+  Legend,
 } from 'recharts';
-import { apiGet, fmtUsd, fmtPct, fmtDate } from '../lib/api';
+import { apiGet, fmtUsd, fmtPct, fmtDate, fmtNum } from '../lib/api';
 import type { Performance } from '../lib/api';
 import StatCard from '../components/StatCard';
 
@@ -33,22 +33,19 @@ export default function PerformancePage() {
     return <div className="text-center py-12 text-fg-muted">Sin datos.</div>;
   }
 
-  const { performance: m, equity_curve, recent_closed_trades } = perf;
+  const { performance: m, advanced, equity_curve, benchmark, recent_closed_trades } = perf;
   const initial = equity_curve[0]?.total_value ?? 10000;
   const last = equity_curve[equity_curve.length - 1]?.total_value ?? initial;
   const totalReturn = ((last - initial) / initial) * 100;
 
-  // Datos para el chart (formateamos fecha corta)
   const chartData = equity_curve.map((p) => ({
-    date: p.date.slice(5),       // MM-DD
+    date: p.date.slice(5),
     value: Number(p.total_value),
     pnl: Number(p.daily_pnl_pct),
   }));
 
-  // Distribución de P&L
   const winCount = m.winning_trades;
   const lossCount = m.losing_trades;
-  const expectedR = m.avg_pnl_pct;
 
   return (
     <div className="space-y-6">
@@ -64,7 +61,7 @@ export default function PerformancePage() {
         </p>
       </div>
 
-      {/* KPIs */}
+      {/* KPIs principales */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Hit Rate"
@@ -86,6 +83,43 @@ export default function PerformancePage() {
           label="Trades Total"
           value={String(m.total_trades)}
           hint="cerrados (paper)"
+        />
+      </div>
+
+      {/* Risk-adjusted KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          label="Sharpe"
+          value={fmtNum(advanced.sharpe)}
+          hint="anualizado · rf 4%"
+          deltaPositive={(advanced.sharpe ?? 0) >= 1}
+          delta={
+            advanced.sharpe == null
+              ? undefined
+              : advanced.sharpe >= 1
+                ? 'bueno'
+                : advanced.sharpe >= 0
+                  ? 'flojo'
+                  : 'malo'
+          }
+        />
+        <StatCard
+          label="Sortino"
+          value={fmtNum(advanced.sortino)}
+          hint="downside risk"
+          deltaPositive={(advanced.sortino ?? 0) >= 1}
+        />
+        <StatCard
+          label="Max Drawdown"
+          value={fmtPct(advanced.max_drawdown_pct)}
+          hint="peor caída desde peak"
+          deltaPositive={(advanced.max_drawdown_pct ?? 0) > -15}
+        />
+        <StatCard
+          label="Calmar"
+          value={fmtNum(advanced.calmar)}
+          hint="CAGR / |MaxDD|"
+          deltaPositive={(advanced.calmar ?? 0) >= 1}
         />
       </div>
 
@@ -159,6 +193,92 @@ export default function PerformancePage() {
         </div>
       </section>
 
+      {/* Benchmark vs SPY */}
+      {benchmark && benchmark.series.length > 1 && (
+        <section className="panel">
+          <div className="panel-header">
+            <span>estrategia vs SPY · base 100</span>
+            <span
+              className={`num ${benchmark.alpha_pct >= 0 ? 'text-bull' : 'text-bear'}`}
+            >
+              α {fmtPct(benchmark.alpha_pct)}
+            </span>
+          </div>
+          <div className="p-5">
+            <div className="grid grid-cols-3 gap-4 mb-4 text-2xs">
+              <div>
+                <div className="text-fg-subtle uppercase tracking-widest">estrategia</div>
+                <div className="num text-amber-glow text-lg mt-1">
+                  {fmtPct(benchmark.strategy_return_pct)}
+                </div>
+              </div>
+              <div>
+                <div className="text-fg-subtle uppercase tracking-widest">SPY</div>
+                <div className="num text-cyan-glow text-lg mt-1">
+                  {fmtPct(benchmark.benchmark_return_pct)}
+                </div>
+              </div>
+              <div>
+                <div className="text-fg-subtle uppercase tracking-widest">alpha</div>
+                <div
+                  className={`num text-lg mt-1 ${
+                    benchmark.alpha_pct >= 0 ? 'text-bull' : 'text-bear'
+                  }`}
+                >
+                  {fmtPct(benchmark.alpha_pct)}
+                </div>
+              </div>
+            </div>
+            <ResponsiveContainer width="100%" height={260}>
+              <ComposedChart data={benchmark.series.map((d) => ({ ...d, date: d.date.slice(5) }))}>
+                <CartesianGrid stroke="#2a2a31" strokeDasharray="2 4" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  stroke="#5a5a68"
+                  tick={{ fontSize: 11, fontFamily: 'IBM Plex Mono' }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  stroke="#5a5a68"
+                  tick={{ fontSize: 11, fontFamily: 'IBM Plex Mono' }}
+                  axisLine={false}
+                  tickLine={false}
+                  domain={['auto', 'auto']}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#121215',
+                    border: '1px solid #2a2a31',
+                    borderRadius: 6,
+                    fontFamily: 'IBM Plex Mono',
+                    fontSize: 12,
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: 11, fontFamily: 'IBM Plex Mono' }} />
+                <ReferenceLine y={100} stroke="#5a5a68" strokeDasharray="4 4" />
+                <Line
+                  type="monotone"
+                  dataKey="strategy"
+                  name="estrategia"
+                  stroke="#fbbf24"
+                  strokeWidth={2}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="benchmark"
+                  name="SPY"
+                  stroke="#22d3ee"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      )}
+
       {/* Distribución W/L + métricas */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <section className="panel">
@@ -200,11 +320,14 @@ export default function PerformancePage() {
         </section>
 
         <section className="panel">
-          <div className="panel-header">expectancy</div>
+          <div className="panel-header">risk-adjusted</div>
           <div className="p-5 space-y-3">
-            <RowKv label="Hit rate" value={`${m.hit_rate_pct.toFixed(1)}%`} />
-            <RowKv label="Avg return / trade" value={fmtPct(m.avg_pnl_pct)} />
-            <RowKv label="Total P&L" value={fmtUsd(m.total_pnl_usd)} />
+            <RowKv label="CAGR" value={fmtPct(advanced.cagr_pct)} />
+            <RowKv label="Volatilidad anual" value={fmtPct(advanced.volatility_annual_pct)} />
+            <RowKv label="Sharpe (rf 4%)" value={fmtNum(advanced.sharpe)} />
+            <RowKv label="Sortino" value={fmtNum(advanced.sortino)} />
+            <RowKv label="Max drawdown" value={fmtPct(advanced.max_drawdown_pct)} />
+            <RowKv label="Calmar" value={fmtNum(advanced.calmar)} />
             <RowKv
               label="Edge ¿positivo?"
               value={m.total_pnl_usd > 0 ? 'SÍ ✓' : 'AÚN NO'}

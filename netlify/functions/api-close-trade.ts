@@ -5,7 +5,7 @@
  * Cierra un trade manualmente. Si no se pasa exit_price, usa el último quote.
  */
 
-import { getSupabase } from './_shared/supabase.ts';
+import { getSupabase, getUserIdFromRequest } from './_shared/supabase.ts';
 
 export default async (req: Request) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
@@ -18,6 +18,7 @@ export default async (req: Request) => {
   }
 
   const supabase = getSupabase();
+  const userId = await getUserIdFromRequest(req);
 
   const { data: trade, error } = await supabase
     .from('trades')
@@ -27,6 +28,10 @@ export default async (req: Request) => {
   if (error || !trade) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
   if (trade.status === 'CLOSED')
     return new Response(JSON.stringify({ error: 'Already closed' }), { status: 409 });
+  // Si hay usuario autenticado, debe coincidir con dueño del trade
+  if (userId && trade.user_id && trade.user_id !== userId) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
+  }
 
   let exitPrice = body.exit_price;
   if (!exitPrice) {
@@ -52,8 +57,11 @@ export default async (req: Request) => {
     })
     .eq('id', trade.id);
 
-  // Devolver capital + P&L
-  const { data: pf } = await supabase.from('portfolio').select('id, cash').order('id').limit(1).single();
+  // Devolver capital + P&L al portfolio correcto (scoped por user_id)
+  let pfQuery = supabase.from('portfolio').select('id, cash').order('id').limit(1);
+  if (trade.user_id) pfQuery = pfQuery.eq('user_id', trade.user_id);
+  else pfQuery = pfQuery.is('user_id', null);
+  const { data: pf } = await pfQuery.maybeSingle();
   if (pf) {
     await supabase
       .from('portfolio')

@@ -1,5 +1,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+// UUID sentinel para snapshots/registros del modo single-user (sin auth).
+// equity_snapshots tiene PK (user_id, date) que no admite NULL.
+export const SINGLE_USER_ID = '00000000-0000-0000-0000-000000000000';
+
 let _client: SupabaseClient | null = null;
 
 export function getSupabase(): SupabaseClient {
@@ -17,6 +21,26 @@ export function getSupabase(): SupabaseClient {
   });
 
   return _client;
+}
+
+/**
+ * Extrae el user_id (auth.uid()) del JWT enviado en el header Authorization.
+ * Devuelve null si no hay token o es inválido. NO arroja error: las funciones
+ * que llaman deciden si requieren auth o aceptan modo single-user.
+ */
+export async function getUserIdFromRequest(req: Request): Promise<string | null> {
+  const auth = req.headers.get('Authorization') ?? req.headers.get('authorization');
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  const token = auth.slice('Bearer '.length).trim();
+  if (!token) return null;
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data?.user) return null;
+    return data.user.id;
+  } catch {
+    return null;
+  }
 }
 
 /**

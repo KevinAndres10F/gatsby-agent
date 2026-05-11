@@ -9,6 +9,7 @@
 import type { Config } from '@netlify/functions';
 import { getSupabase, logRunStart, logRunComplete } from './_shared/supabase.ts';
 import { getFinnhubQuote } from './_shared/finnhub.ts';
+import { notifyTradeClosed } from './_shared/telegram.ts';
 
 export const config: Config = {
   schedule: '0 14,16,18,20 * * 1-5',
@@ -89,6 +90,15 @@ export default async () => {
             .eq('id', pf.id);
         }
         closed++;
+
+        // Notificación Telegram (fire-and-forget, no rompe el cron si falla)
+        notifyTradeClosed({
+          ticker: t.ticker,
+          direction: t.direction,
+          pnl_usd: pnlUsd,
+          pnl_pct: pnlPct,
+          exit_reason: hitStop ? 'stop' : 'target',
+        }).catch((e) => console.error('[update-prices] telegram failed:', e));
       }
 
       await new Promise((r) => setTimeout(r, 1300));

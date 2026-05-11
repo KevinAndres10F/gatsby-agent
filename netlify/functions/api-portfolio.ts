@@ -1,25 +1,40 @@
 /**
  * GET /api/portfolio
  * Devuelve estado del portfolio: cash, posiciones abiertas con P&L flotante.
+ * Multi-usuario: si llega un Bearer token, scope por user_id.
+ * Si no, opera en modo single-user (user_id IS NULL).
  */
 
-import { getSupabase } from './_shared/supabase.ts';
+import { getSupabase, getUserIdFromRequest, SINGLE_USER_ID } from './_shared/supabase.ts';
 
-export default async () => {
+export default async (req: Request) => {
   const supabase = getSupabase();
+  const userId = await getUserIdFromRequest(req);
+  const equityUserId = userId ?? SINGLE_USER_ID;
 
-  const [pfRes, openRes, equityRes] = await Promise.all([
-    supabase.from('portfolio').select('*').order('id').limit(1).single(),
-    supabase.from('v_open_positions').select('*'),
-    supabase.from('equity_snapshots').select('*').order('date', { ascending: false }).limit(1).single(),
-  ]);
+  // Portfolio scope
+  let pfQuery = supabase.from('portfolio').select('*').order('id').limit(1);
+  pfQuery = userId ? pfQuery.eq('user_id', userId) : pfQuery.is('user_id', null);
+  const pfRes = await pfQuery.maybeSingle();
+
+  let posQuery = supabase.from('v_open_positions').select('*');
+  posQuery = userId ? posQuery.eq('user_id', userId) : posQuery.is('user_id', null);
+  const openRes = await posQuery;
+
+  const equityRes = await supabase
+    .from('equity_snapshots')
+    .select('*')
+    .eq('user_id', equityUserId)
+    .order('date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   const portfolio = pfRes.data;
   const positions = openRes.data ?? [];
   const lastSnapshot = equityRes.data;
 
   const positionsValue = positions.reduce(
-    (sum, p) => sum + (p.current_price ?? p.entry_price) * p.shares,
+    (sum: number, p: any) => sum + (p.current_price ?? p.entry_price) * p.shares,
     0,
   );
   const totalValue = (portfolio?.cash ?? 0) + positionsValue;
