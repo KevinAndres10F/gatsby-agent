@@ -41,8 +41,8 @@ export interface Signal {
   direction: 'LONG' | 'SHORT' | 'HOLD';
   conviction: 'HIGH' | 'MEDIUM' | 'LOW';
   entry_price: number;
-  stop_loss: number;
-  take_profit: number;
+  stop_loss: number | null;
+  take_profit: number | null;
   position_size_pct: number;
   technical_score: number;
   sentiment_score: number;

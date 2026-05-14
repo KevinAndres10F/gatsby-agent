@@ -13,6 +13,13 @@ export default function SignalCard({ signal, onExecuted }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const isLong = signal.direction === 'LONG';
+  const isHold = signal.direction === 'HOLD';
+  const hasPlan = !isHold && signal.stop_loss != null && signal.take_profit != null;
+  const directionColor = isHold
+    ? 'bg-bg-surface text-fg-muted'
+    : isLong
+      ? 'bg-bull/10 text-bull'
+      : 'bg-bear/10 text-bear';
   const convictionColor =
     signal.conviction === 'HIGH'
       ? 'text-amber-glow border-amber-glow/30 bg-amber-glow/5'
@@ -34,8 +41,10 @@ export default function SignalCard({ signal, onExecuted }: Props) {
   };
 
   const rrRatio =
-    Math.abs(signal.take_profit - signal.entry_price) /
-    Math.max(Math.abs(signal.entry_price - signal.stop_loss), 0.01);
+    signal.take_profit != null && signal.stop_loss != null
+      ? Math.abs(signal.take_profit - signal.entry_price) /
+        Math.max(Math.abs(signal.entry_price - signal.stop_loss), 0.01)
+      : null;
 
   return (
     <div className="panel hover:border-amber/40 transition-colors">
@@ -45,9 +54,7 @@ export default function SignalCard({ signal, onExecuted }: Props) {
             <div className="flex items-center gap-2.5">
               <span className="ticker-pill text-sm px-2.5 py-1">{signal.ticker}</span>
               <span
-                className={`num text-xs font-medium px-2 py-0.5 rounded ${
-                  isLong ? 'bg-bull/10 text-bull' : 'bg-bear/10 text-bear'
-                }`}
+                className={`num text-xs font-medium px-2 py-0.5 rounded ${directionColor}`}
               >
                 {signal.direction}
               </span>
@@ -75,17 +82,19 @@ export default function SignalCard({ signal, onExecuted }: Props) {
       </div>
 
       {/* Levels grid */}
-      <div className="grid grid-cols-3 divide-x divide-bg-border border-b border-bg-border">
-        <Cell label="stop" value={fmtUsd(signal.stop_loss)} accent="bear" />
-        <Cell label="entry" value={fmtUsd(signal.entry_price)} />
-        <Cell label="target" value={fmtUsd(signal.take_profit)} accent="bull" />
-      </div>
+      {hasPlan && (
+        <div className="grid grid-cols-3 divide-x divide-bg-border border-b border-bg-border">
+          <Cell label="stop" value={fmtUsd(signal.stop_loss)} accent="bear" />
+          <Cell label="entry" value={fmtUsd(signal.entry_price)} />
+          <Cell label="target" value={fmtUsd(signal.take_profit)} accent="bull" />
+        </div>
+      )}
 
       {/* Sub-scores */}
       <div className="grid grid-cols-3 divide-x divide-bg-border border-b border-bg-border text-2xs">
         <Cell label="técnico" value={`${signal.technical_score}`} small />
         <Cell label="sentim." value={`${signal.sentiment_score}`} small />
-        <Cell label="r:r" value={rrRatio.toFixed(2)} small />
+        <Cell label="r:r" value={rrRatio != null ? rrRatio.toFixed(2) : '—'} small />
       </div>
 
       {/* Rationale */}
@@ -95,7 +104,11 @@ export default function SignalCard({ signal, onExecuted }: Props) {
 
       {/* Action */}
       <div className="px-5 pb-4">
-        {signal.executed ? (
+        {isHold || !hasPlan ? (
+          <div className="text-2xs uppercase tracking-widest text-fg-subtle text-center py-2">
+            Señal informativa · no accionable
+          </div>
+        ) : signal.executed ? (
           <div className="flex items-center gap-2 text-2xs text-bull">
             <Check size={14} />
             <span>Ejecutada como paper trade</span>
