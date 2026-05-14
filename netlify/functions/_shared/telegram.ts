@@ -139,9 +139,11 @@ export async function notifyTradeClosed(payload: {
 }): Promise<void> {
   const win = payload.pnl_usd >= 0;
   const emoji = win ? '✅' : '🛑';
-  const sign = payload.pnl_usd >= 0 ? '+' : '';
+  const sign = win ? '+' : '-';
+  const absUsd = Math.abs(payload.pnl_usd).toFixed(2);
+  const absPct = Math.abs(payload.pnl_pct).toFixed(2);
   const text =
     `${emoji} <b>${escapeHtml(payload.ticker)}</b> ${escapeHtml(payload.direction)} cerrado por <b>${escapeHtml(payload.exit_reason)}</b>\n` +
-    `P&amp;L: <code>${sign}$${payload.pnl_usd.toFixed(2)}</code> (<code>${sign}${payload.pnl_pct.toFixed(2)}%</code>)`;
+    `P&amp;L: <code>${sign}$${absUsd}</code> (<code>${sign}${absPct}%</code>)`;
   await sendTelegram(text);
 }
