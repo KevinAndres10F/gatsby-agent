@@ -23,6 +23,7 @@ const MAX_CANDIDATES = 25;       // máximo de tickers que pasan a analyze
 const MIN_VOLUME = 500_000;      // liquidez mínima diaria
 const MIN_MOVE_PCT = 1.5;        // movimiento mínimo del día (%)
 const MAX_MOVE_PCT = 20;         // descarta moves extremos (probable noise)
+const NEWS_LOOKBACK_DAYS = 3;    // captura noticias frescas que analyze pueda no haber visto aún
 
 export default async () => {
   const runId = await logRunStart('discovery');
@@ -109,12 +110,14 @@ export default async () => {
     if (insErr) throw insErr;
 
     // ---- 4. Pulls noticias ----
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const fromDate = new Date(Date.now() - NEWS_LOOKBACK_DAYS * 86400000)
+      .toISOString()
+      .slice(0, 10);
     let newsCount = 0;
 
     await throttledMap(candidates, async (c) => {
       try {
-        const articles = await getCompanyNews(c.ticker, yesterday, today);
+        const articles = await getCompanyNews(c.ticker, fromDate, today);
         if (articles.length === 0) return;
 
         const rows = articles.slice(0, 5).map((a) => ({

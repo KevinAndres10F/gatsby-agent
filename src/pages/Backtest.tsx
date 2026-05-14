@@ -4,9 +4,14 @@ import type { BacktestRun } from '../lib/api';
 import { Loader2, Play } from 'lucide-react';
 import StatCard from '../components/StatCard';
 
+type Mode = 'technical' | 'llm-replay';
+type Conviction = 'LOW' | 'MEDIUM' | 'HIGH';
+
 export default function Backtest() {
+  const [mode, setMode] = useState<Mode>('technical');
   const [tickers, setTickers] = useState('SPY,AAPL,MSFT,NVDA,AMZN');
   const [years, setYears] = useState(2);
+  const [minConviction, setMinConviction] = useState<Conviction>('LOW');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
@@ -17,6 +22,7 @@ export default function Backtest() {
     sharpe: number | null;
     sortino: number | null;
     max_drawdown_pct: number | null;
+    signals_replayed?: number;
   } | null>(null);
   const [history, setHistory] = useState<BacktestRun[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -26,19 +32,29 @@ export default function Backtest() {
     setError(null);
     setResult(null);
     try {
-      const tickerList = tickers
-        .split(',')
-        .map((t) => t.trim().toUpperCase())
-        .filter(Boolean);
       const today = new Date().toISOString().slice(0, 10);
       const from = new Date(Date.now() - years * 365 * 86400_000)
         .toISOString()
         .slice(0, 10);
 
-      const r = await fetch('/.netlify/functions/backtest', {
+      let endpoint: string;
+      let body: Record<string, unknown>;
+      if (mode === 'technical') {
+        const tickerList = tickers
+          .split(',')
+          .map((t) => t.trim().toUpperCase())
+          .filter(Boolean);
+        endpoint = '/.netlify/functions/backtest';
+        body = { tickers: tickerList, from, to: today };
+      } else {
+        endpoint = '/.netlify/functions/backtest-llm-replay';
+        body = { from, to: today, min_conviction: minConviction };
+      }
+
+      const r = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tickers: tickerList, from, to: today }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -75,27 +91,86 @@ export default function Backtest() {
           Backtesting
         </h1>
         <p className="text-sm text-fg-muted mt-1">
-          Simula la estrategia técnica (sin LLM) sobre 2+ años de data histórica.
+          {mode === 'technical'
+            ? 'Estrategia técnica clásica (SMA cross + RSI) sobre datos históricos.'
+            : 'Replay de las señales LLM ya generadas como paper trades. Valida si las señales tienen edge real.'}
         </p>
+      </div>
+
+      {/* Mode selector */}
+      <div className="panel p-4">
+        <div className="text-2xs uppercase tracking-widest text-fg-subtle mb-2">
+          modo
+        </div>
+        <div className="flex bg-bg-surface rounded border border-bg-border overflow-hidden w-fit">
+          <button
+            onClick={() => setMode('technical')}
+            className={`px-4 py-1.5 text-xs transition-colors ${
+              mode === 'technical'
+                ? 'bg-amber/10 text-amber-glow'
+                : 'text-fg-muted hover:text-fg'
+            }`}
+          >
+            Técnico
+          </button>
+          <button
+            onClick={() => setMode('llm-replay')}
+            className={`px-4 py-1.5 text-xs transition-colors ${
+              mode === 'llm-replay'
+                ? 'bg-amber/10 text-amber-glow'
+                : 'text-fg-muted hover:text-fg'
+            }`}
+          >
+            LLM Replay
+          </button>
+        </div>
       </div>
 
       {/* Form */}
       <section className="panel p-6 space-y-5">
-        <div>
-          <label className="block text-2xs uppercase tracking-widest text-fg-subtle mb-2">
-            Tickers (separados por coma)
-          </label>
-          <input
-            type="text"
-            value={tickers}
-            onChange={(e) => setTickers(e.target.value)}
-            className="w-full bg-bg-surface border border-bg-border rounded px-3 py-2 text-sm num focus:outline-none focus:border-amber/40"
-            placeholder="SPY,AAPL,MSFT"
-          />
-          <p className="text-2xs text-fg-subtle mt-2">
-            Cada ticker consume 1 request de Alpha Vantage (free tier: 25/día). Ideal: 3-8 tickers.
-          </p>
-        </div>
+        {mode === 'technical' && (
+          <div>
+            <label className="block text-2xs uppercase tracking-widest text-fg-subtle mb-2">
+              Tickers (separados por coma)
+            </label>
+            <input
+              type="text"
+              value={tickers}
+              onChange={(e) => setTickers(e.target.value)}
+              className="w-full bg-bg-surface border border-bg-border rounded px-3 py-2 text-sm num focus:outline-none focus:border-amber/40"
+              placeholder="SPY,AAPL,MSFT"
+            />
+            <p className="text-2xs text-fg-subtle mt-2">
+              Cada ticker consume 1 request de Alpha Vantage (free tier: 25/día). Ideal: 3-8 tickers.
+            </p>
+          </div>
+        )}
+        {mode === 'llm-replay' && (
+          <div>
+            <label className="block text-2xs uppercase tracking-widest text-fg-subtle mb-2">
+              Convicción mínima
+            </label>
+            <div className="flex gap-2">
+              {(['LOW', 'MEDIUM', 'HIGH'] as Conviction[]).map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setMinConviction(c)}
+                  className={`px-3 py-1.5 text-xs rounded border transition-colors ${
+                    minConviction === c
+                      ? 'bg-amber/10 text-amber-glow border-amber/30'
+                      : 'border-bg-border text-fg-muted hover:text-fg'
+                  }`}
+                >
+                  {c}+
+                </button>
+              ))}
+            </div>
+            <p className="text-2xs text-fg-subtle mt-2">
+              Replay toma las señales ya persistidas en <code>signals</code>. Sin coste de Claude.
+              Limitado al sample acumulado hasta hoy.
+            </p>
+          </div>
+        )}
         <div>
           <label className="block text-2xs uppercase tracking-widest text-fg-subtle mb-2">
             Período
@@ -127,7 +202,9 @@ export default function Backtest() {
         {error && <div className="text-2xs text-bear">{error}</div>}
         {running && (
           <div className="text-2xs text-fg-subtle">
-            Esto tarda ~13s por ticker (rate limit Alpha Vantage). Tomá un café ☕
+            {mode === 'technical'
+              ? 'Esto tarda ~13s por ticker (rate limit Alpha Vantage). Tomá un café ☕'
+              : 'Tarda ~13s por ticker único en las señales. Más rápido cuanto menos diversidad.'}
           </div>
         )}
       </section>
@@ -159,7 +236,9 @@ export default function Backtest() {
             />
           </div>
           <div className="text-2xs text-fg-subtle">
-            Run #{result.run_id} guardado en <code>backtest_runs</code>. Puedes revisar los trades individuales en Supabase.
+            Run #{result.run_id} guardado en <code>backtest_runs</code>
+            {result.signals_replayed != null && ` · ${result.signals_replayed} señales replicadas`}.
+            Puedes revisar los trades individuales en Supabase.
           </div>
         </section>
       )}

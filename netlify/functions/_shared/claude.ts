@@ -10,12 +10,19 @@ function getClient(): Anthropic {
   return _client;
 }
 
-// Modelo recomendado: balance costo/calidad
-const MODEL = 'claude-sonnet-4-6';
+// Modelos: Haiku para sentimiento de noticias (más barato y rápido),
+// Sonnet para síntesis final de señales (mejor razonamiento).
+const MODEL_NEWS = 'claude-haiku-4-5-20251001';
+const MODEL_SIGNAL = 'claude-sonnet-4-6';
 
 // Pricing aproximado para tracking de costos (USD per 1M tokens)
-const PRICE_INPUT_PER_M = 3.0;
-const PRICE_OUTPUT_PER_M = 15.0;
+const PRICE_SONNET_INPUT = 3.0;
+const PRICE_SONNET_OUTPUT = 15.0;
+const PRICE_HAIKU_INPUT = 1.0;
+const PRICE_HAIKU_OUTPUT = 5.0;
+// Prompt caching: write = 1.25x input, read = 0.1x input
+const CACHE_WRITE_MULT = 1.25;
+const CACHE_READ_MULT = 0.1;
 
 export interface NewsAnalysis {
   ticker: string;
@@ -40,14 +47,43 @@ export interface SignalRecommendation {
 export interface ClaudeUsage {
   input_tokens: number;
   output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
   cost_usd: number;
 }
 
-function calculateCost(inputTokens: number, outputTokens: number): number {
+function calculateCost(
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  },
+  priceIn: number,
+  priceOut: number,
+): number {
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+  const cacheRead = usage.cache_read_input_tokens ?? 0;
   return (
-    (inputTokens / 1_000_000) * PRICE_INPUT_PER_M +
-    (outputTokens / 1_000_000) * PRICE_OUTPUT_PER_M
+    (usage.input_tokens / 1_000_000) * priceIn +
+    (usage.output_tokens / 1_000_000) * priceOut +
+    (cacheWrite / 1_000_000) * priceIn * CACHE_WRITE_MULT +
+    (cacheRead / 1_000_000) * priceIn * CACHE_READ_MULT
   );
+}
+
+function buildUsage(
+  apiUsage: any,
+  priceIn: number,
+  priceOut: number,
+): ClaudeUsage {
+  return {
+    input_tokens: apiUsage.input_tokens ?? 0,
+    output_tokens: apiUsage.output_tokens ?? 0,
+    cache_creation_input_tokens: apiUsage.cache_creation_input_tokens ?? 0,
+    cache_read_input_tokens: apiUsage.cache_read_input_tokens ?? 0,
+    cost_usd: calculateCost(apiUsage, priceIn, priceOut),
+  };
 }
 
 /**
@@ -90,7 +126,16 @@ export async function analyzeNews(
   newsItems: NewsItem[],
 ): Promise<{ analyses: NewsAnalysis[]; usage: ClaudeUsage }> {
   if (newsItems.length === 0) {
-    return { analyses: [], usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0 } };
+    return {
+      analyses: [],
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        cost_usd: 0,
+      },
+    };
   }
 
   const client = getClient();
@@ -103,9 +148,15 @@ export async function analyzeNews(
     .join('\n\n');
 
   const response = await client.messages.create({
-    model: MODEL,
+    model: MODEL_NEWS,
     max_tokens: 2048,
-    system: NEWS_ANALYSIS_PROMPT,
+    system: [
+      {
+        type: 'text',
+        text: NEWS_ANALYSIS_PROMPT,
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
     messages: [{ role: 'user', content: userContent }],
   });
 
@@ -115,12 +166,7 @@ export async function analyzeNews(
     .join('');
 
   const analyses = extractJson<NewsAnalysis[]>(text);
-
-  const usage: ClaudeUsage = {
-    input_tokens: response.usage.input_tokens,
-    output_tokens: response.usage.output_tokens,
-    cost_usd: calculateCost(response.usage.input_tokens, response.usage.output_tokens),
-  };
+  const usage = buildUsage(response.usage, PRICE_HAIKU_INPUT, PRICE_HAIKU_OUTPUT);
 
   return { analyses, usage };
 }
@@ -161,7 +207,16 @@ export async function generateSignals(
   contexts: SignalContext[],
 ): Promise<{ signals: SignalRecommendation[]; usage: ClaudeUsage }> {
   if (contexts.length === 0) {
-    return { signals: [], usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0 } };
+    return {
+      signals: [],
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        cost_usd: 0,
+      },
+    };
   }
 
   const client = getClient();
@@ -186,9 +241,15 @@ ${newsAgg}`;
     .join('\n\n');
 
   const response = await client.messages.create({
-    model: MODEL,
+    model: MODEL_SIGNAL,
     max_tokens: 2048,
-    system: SIGNAL_PROMPT,
+    system: [
+      {
+        type: 'text',
+        text: SIGNAL_PROMPT,
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
     messages: [{ role: 'user', content: userContent }],
   });
 
@@ -198,12 +259,7 @@ ${newsAgg}`;
     .join('');
 
   const signals = extractJson<SignalRecommendation[]>(text);
-
-  const usage: ClaudeUsage = {
-    input_tokens: response.usage.input_tokens,
-    output_tokens: response.usage.output_tokens,
-    cost_usd: calculateCost(response.usage.input_tokens, response.usage.output_tokens),
-  };
+  const usage = buildUsage(response.usage, PRICE_SONNET_INPUT, PRICE_SONNET_OUTPUT);
 
   return { signals, usage };
 }
