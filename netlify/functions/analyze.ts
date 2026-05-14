@@ -25,7 +25,7 @@ import {
   type SignalContext,
 } from './_shared/claude.ts';
 import { planTrade } from './_shared/risk.ts';
-import { notifyHighConvictionSignals } from './_shared/telegram.ts';
+import { notifySignals, type SignalSummary } from './_shared/telegram.ts';
 
 export const config: Config = {
   schedule: '15 11 * * 1-5',
@@ -96,6 +96,9 @@ export default async () => {
 
     if (!candidates || candidates.length === 0) {
       console.log('[analyze] No candidates with news today.');
+      await notifySignals([]).catch((e) =>
+        console.error('[analyze] telegram notify failed:', e),
+      );
       await logRunComplete(runId, 'success', { records_processed: 0 });
       return new Response(JSON.stringify({ ok: true, signals: 0 }));
     }
@@ -115,6 +118,9 @@ export default async () => {
 
     if (!newsRows || newsRows.length === 0) {
       console.log('[analyze] No new news to analyze.');
+      await notifySignals([]).catch((e) =>
+        console.error('[analyze] telegram notify failed:', e),
+      );
       await logRunComplete(runId, 'success', { records_processed: 0 });
       return new Response(JSON.stringify({ ok: true, signals: 0 }));
     }
@@ -229,6 +235,9 @@ export default async () => {
     console.log(`[analyze] Bars: ${cachedCount} cached / ${fetchedCount} fetched`);
 
     if (contexts.length === 0) {
+      await notifySignals([]).catch((e) =>
+        console.error('[analyze] telegram notify failed:', e),
+      );
       await logRunComplete(runId, 'partial', {
         records_processed: 0,
         llm_tokens_used: totalTokensIn + totalTokensOut,
@@ -244,12 +253,13 @@ export default async () => {
     totalTokensOut += sigResult.usage.output_tokens;
     totalCost += sigResult.usage.cost_usd;
 
+    // Conservamos top N por score, incluyendo HOLD para que la web refleje
+    // que el agente sí corrió y razonó sobre los candidatos.
     const ranked = sigResult.signals
-      .filter((s) => s.direction === 'LONG' || s.direction === 'SHORT')
       .sort((a, b) => b.score - a.score)
       .slice(0, TOP_N_FINAL_SIGNALS);
 
-    // ---- 6. Persistir señales con plan de trade ----
+    // ---- 6. Persistir señales (con plan solo para LONG/SHORT) ----
     const { data: portfolio } = await supabase
       .from('portfolio')
       .select('cash')
@@ -257,32 +267,30 @@ export default async () => {
       .limit(1)
       .single();
 
-    const insertedSignals: Array<{
-      ticker: string;
-      direction: 'LONG' | 'SHORT';
-      score: number;
-      entry_price: number;
-      stop_loss: number;
-      take_profit: number;
-      rationale: string;
-      conviction: string;
-    }> = [];
+    const insertedSignals: SignalSummary[] = [];
 
     for (const sig of ranked) {
       const ctx = contexts.find((c) => c.ticker === sig.ticker);
-      if (!ctx || !ctx.technical.atr_14) continue;
+      if (!ctx) continue;
 
-      const plan = planTrade(
-        sig.direction as 'LONG' | 'SHORT',
-        ctx.current_price,
-        ctx.technical.atr_14,
-        { capital: portfolio?.cash ?? 10000 },
-      );
-      if (!plan) continue;
+      const isActionable = sig.direction === 'LONG' || sig.direction === 'SHORT';
+      const plan = isActionable && ctx.technical.atr_14
+        ? planTrade(
+            sig.direction as 'LONG' | 'SHORT',
+            ctx.current_price,
+            ctx.technical.atr_14,
+            { capital: portfolio?.cash ?? 10000 },
+          )
+        : null;
 
-      const positionPct = portfolio
+      // Para HOLD (o LONG/SHORT sin ATR), guardamos precio de referencia
+      // pero sin stop/target ni sizing — la señal es informativa.
+      const entryPrice = plan?.entry_price ?? ctx.current_price;
+      const stopLoss = plan?.stop_loss ?? null;
+      const takeProfit = plan?.take_profit ?? null;
+      const positionPct = plan && portfolio
         ? (plan.capital_used / portfolio.cash) * 100
-        : 10;
+        : 0;
 
       const newsIds = newsRows
         .filter((n) => n.ticker === sig.ticker)
@@ -295,9 +303,9 @@ export default async () => {
           score: sig.score,
           direction: sig.direction,
           conviction: sig.conviction,
-          entry_price: plan.entry_price,
-          stop_loss: plan.stop_loss,
-          take_profit: plan.take_profit,
+          entry_price: entryPrice,
+          stop_loss: stopLoss,
+          take_profit: takeProfit,
           position_size_pct: positionPct,
           technical_score: sig.technical_score,
           sentiment_score: sig.sentiment_score,
@@ -309,27 +317,30 @@ export default async () => {
       if (!sErr) {
         insertedSignals.push({
           ticker: sig.ticker,
-          direction: sig.direction as 'LONG' | 'SHORT',
+          direction: sig.direction,
           score: sig.score,
-          entry_price: plan.entry_price,
-          stop_loss: plan.stop_loss,
-          take_profit: plan.take_profit,
+          entry_price: entryPrice,
+          stop_loss: stopLoss,
+          take_profit: takeProfit,
           rationale: sig.rationale,
           conviction: sig.conviction,
         });
       }
     }
 
-    console.log(`[analyze] Signals generated: ${insertedSignals.length}`);
-
-    // ---- 7. Notificación Telegram (HIGH conviction) ----
+    const actionableCount = insertedSignals.filter(
+      (s) => s.direction !== 'HOLD',
+    ).length;
     const highConviction = insertedSignals.filter((s) => s.conviction === 'HIGH');
-    if (highConviction.length > 0) {
-      try {
-        await notifyHighConvictionSignals(highConviction);
-      } catch (e) {
-        console.error('[analyze] telegram notify failed:', e);
-      }
+    console.log(
+      `[analyze] Signals generated: ${insertedSignals.length} (${actionableCount} actionable, ${highConviction.length} HIGH)`,
+    );
+
+    // ---- 7. Notificación Telegram (todas las señales del día) ----
+    try {
+      await notifySignals(insertedSignals);
+    } catch (e) {
+      console.error('[analyze] telegram notify failed:', e);
     }
 
     await logRunComplete(runId, 'success', {
