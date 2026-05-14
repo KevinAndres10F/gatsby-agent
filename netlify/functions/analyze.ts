@@ -26,6 +26,7 @@ import {
 } from './_shared/claude.ts';
 import { planTrade } from './_shared/risk.ts';
 import { notifySignals, type SignalSummary } from './_shared/telegram.ts';
+import { executeSignal } from './_shared/execute.ts';
 
 export const config: Config = {
   schedule: '15 11 * * 1-5',
@@ -35,6 +36,17 @@ const TOP_N_FINAL_SIGNALS = 5;     // máximo de señales que generamos al día
 const MIN_LLM_CONFIDENCE = 0.4;    // si Claude marca conf < 0.4, descartamos
 const ALPHA_VANTAGE_THROTTLE_MS = 12_500; // 5 req/min free tier
 const DAYS_FOR_INDICATORS = 220;   // necesarios para SMA200
+// Ventana de noticias para evitar "días vacíos": si una noticia fresca cae
+// fuera de las últimas 24h (ej. ticker que no era candidato ayer), la
+// queremos igual mientras tenga sentiment=null (no analizada todavía).
+const NEWS_WINDOW_HOURS = 72;
+// Auto-execute: solo aplica al portfolio single-user (user_id NULL).
+// Opt-in: setear AUTO_EXECUTE_HIGH=true en Netlify env vars.
+const AUTO_EXECUTE_ENABLED = process.env.AUTO_EXECUTE_HIGH === 'true';
+const AUTO_EXECUTE_MAX_PER_DAY = parseInt(
+  process.env.AUTO_EXECUTE_MAX_PER_DAY ?? '3',
+  10,
+);
 
 /**
  * Carga histórico de un ticker desde Supabase. Si tiene la vela de hoy,
@@ -106,13 +118,15 @@ export default async () => {
 
     // ---- 2. Cargar noticias de esos candidatos ----
     const tickers = candidates.map((c) => c.ticker);
-    const yesterday = new Date(Date.now() - 86400000).toISOString();
+    const cutoff = new Date(
+      Date.now() - NEWS_WINDOW_HOURS * 3600_000,
+    ).toISOString();
 
     const { data: newsRows, error: nErr } = await supabase
       .from('news')
       .select('id, ticker, title, source, published_at')
       .in('ticker', tickers)
-      .gte('published_at', yesterday)
+      .gte('published_at', cutoff)
       .is('sentiment', null);
     if (nErr) throw nErr;
 
@@ -267,7 +281,8 @@ export default async () => {
       .limit(1)
       .single();
 
-    const insertedSignals: SignalSummary[] = [];
+    type InsertedSignal = SignalSummary & { id: number };
+    const insertedSignals: InsertedSignal[] = [];
 
     for (const sig of ranked) {
       const ctx = contexts.find((c) => c.ticker === sig.ticker);
@@ -296,26 +311,31 @@ export default async () => {
         .filter((n) => n.ticker === sig.ticker)
         .map((n) => n.id);
 
-      const { error: sErr } = await supabase.from('signals').upsert(
-        {
-          ticker: sig.ticker,
-          date: today,
-          score: sig.score,
-          direction: sig.direction,
-          conviction: sig.conviction,
-          entry_price: entryPrice,
-          stop_loss: stopLoss,
-          take_profit: takeProfit,
-          position_size_pct: positionPct,
-          technical_score: sig.technical_score,
-          sentiment_score: sig.sentiment_score,
-          rationale: sig.rationale,
-          news_ids: newsIds,
-        },
-        { onConflict: 'ticker,date' },
-      );
-      if (!sErr) {
+      const { data: upserted, error: sErr } = await supabase
+        .from('signals')
+        .upsert(
+          {
+            ticker: sig.ticker,
+            date: today,
+            score: sig.score,
+            direction: sig.direction,
+            conviction: sig.conviction,
+            entry_price: entryPrice,
+            stop_loss: stopLoss,
+            take_profit: takeProfit,
+            position_size_pct: positionPct,
+            technical_score: sig.technical_score,
+            sentiment_score: sig.sentiment_score,
+            rationale: sig.rationale,
+            news_ids: newsIds,
+          },
+          { onConflict: 'ticker,date' },
+        )
+        .select('id')
+        .single();
+      if (!sErr && upserted) {
         insertedSignals.push({
+          id: upserted.id,
           ticker: sig.ticker,
           direction: sig.direction,
           score: sig.score,
@@ -343,6 +363,41 @@ export default async () => {
       console.error('[analyze] telegram notify failed:', e);
     }
 
+    // ---- 8. Auto-execute HIGH conviction (opt-in, solo single-user) ----
+    let autoExecuted = 0;
+    if (AUTO_EXECUTE_ENABLED && highConviction.length > 0) {
+      // Cuenta cuántos trades del día existen en el portfolio single-user para
+      // respetar AUTO_EXECUTE_MAX_PER_DAY.
+      const startOfDay = `${today}T00:00:00Z`;
+      const { count: tradesToday } = await supabase
+        .from('trades')
+        .select('id', { count: 'exact', head: true })
+        .is('user_id', null)
+        .gte('entry_date', startOfDay);
+      const remaining = AUTO_EXECUTE_MAX_PER_DAY - (tradesToday ?? 0);
+
+      const toExecute = highConviction
+        .filter((s) => s.direction !== 'HOLD' && s.stop_loss != null)
+        .slice(0, Math.max(0, remaining));
+
+      for (const s of toExecute) {
+        const result = await executeSignal(supabase, s.id, null);
+        if (result.ok) {
+          autoExecuted++;
+          console.log(`[analyze] auto-executed HIGH ${s.ticker} ${s.direction}`);
+        } else {
+          console.log(
+            `[analyze] auto-execute skipped ${s.ticker}: ${result.error}`,
+          );
+        }
+      }
+      if (autoExecuted > 0) {
+        console.log(
+          `[analyze] Auto-executed ${autoExecuted} HIGH conviction trade(s) (cap: ${AUTO_EXECUTE_MAX_PER_DAY}/day)`,
+        );
+      }
+    }
+
     await logRunComplete(runId, 'success', {
       records_processed: insertedSignals.length,
       llm_tokens_used: totalTokensIn + totalTokensOut,
@@ -354,6 +409,7 @@ export default async () => {
         bars_cached: cachedCount,
         bars_fetched: fetchedCount,
         high_conviction: highConviction.length,
+        auto_executed: autoExecuted,
       },
     });
 

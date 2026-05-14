@@ -6,6 +6,7 @@ import Signals from './pages/Signals';
 import Portfolio from './pages/Portfolio';
 import Performance from './pages/Performance';
 import Backtest from './pages/Backtest';
+import Health from './pages/Health';
 import Login from './pages/Login';
 import { useAuth } from './lib/auth';
 
@@ -37,6 +38,7 @@ export default function App() {
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/backtest" element={<Backtest />} />
+            <Route path="/health" element={<Health />} />
           </Routes>
         </main>
       </div>

@@ -8,6 +8,7 @@ import {
   Menu,
   X,
   History,
+  HeartPulse,
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
@@ -18,6 +19,7 @@ const items = [
   { to: '/portfolio', label: 'Portfolio', icon: Briefcase },
   { to: '/performance', label: 'Performance', icon: TrendingUp },
   { to: '/backtest', label: 'Backtest', icon: History },
+  { to: '/health', label: 'Health', icon: HeartPulse },
 ];
 
 export default function Sidebar() {
