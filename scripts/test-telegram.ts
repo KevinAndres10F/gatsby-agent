@@ -1,6 +1,6 @@
 /**
- * Smoke test del módulo telegram.ts.
- * Mockea fetch para capturar lo que se enviaría a la API sin hacer requests reales.
+ * Smoke test del módulo telegram.ts (adaptador + formatters).
+ * Mockea fetch para capturar lo que se enviaría a la API sin requests reales.
  * Ejecutar con:  npx tsx scripts/test-telegram.ts
  */
 
@@ -23,22 +23,18 @@ globalThis.fetch = (async (url: any, init?: any) => {
   return new Response('{"ok":true}', { status: 200 });
 }) as typeof fetch;
 
-const { notifySignals, notifyTradeClosed, sendTelegram } = await import(
-  '../netlify/functions/_shared/telegram.ts'
-);
+const {
+  sendTelegram,
+  formatSignalHeadline,
+  formatSignalBody,
+  formatTradeClosedBody,
+  escapeHtml,
+} = await import('../netlify/functions/_shared/telegram.ts');
 
 function divider(title: string) {
   console.log('\n' + '─'.repeat(72));
   console.log('▶ ' + title);
   console.log('─'.repeat(72));
-}
-
-function show(idx: number) {
-  const c = captured[idx];
-  console.log('parse_mode:', c.body.parse_mode);
-  console.log('chat_id:', c.body.chat_id);
-  console.log('text:');
-  console.log(c.body.text);
 }
 
 let failures = 0;
@@ -51,148 +47,126 @@ function assert(cond: boolean, msg: string) {
   }
 }
 
-// ─── Test 1: sin señales ────────────────────────────────────────────────
-divider('Test 1 — notifySignals([]) (caso "sin señales hoy")');
+// ─── Test 1: sendTelegram usa parse_mode HTML y chat por defecto ─────────
+divider('Test 1 — sendTelegram (envío básico)');
 captured.length = 0;
-await notifySignals([]);
-show(0);
+await sendTelegram('<b>hola</b>');
 assert(captured.length === 1, 'envió exactamente 1 mensaje');
 assert(captured[0].body.parse_mode === 'HTML', 'usa parse_mode HTML');
-assert(/no encontró señales/i.test(captured[0].body.text), 'menciona "no encontró señales"');
+assert(captured[0].body.chat_id === '-100TEST', 'usa el chat_id del env por defecto');
 
-// ─── Test 2: mix de LONG/SHORT/HOLD ─────────────────────────────────────
-divider('Test 2 — mix LONG + SHORT + HOLD');
+// ─── Test 2: override de chat_id (ruteo por usuario) ────────────────────
+divider('Test 2 — override de chat_id por usuario');
 captured.length = 0;
-await notifySignals([
-  {
-    ticker: 'NVDA',
-    direction: 'LONG',
-    conviction: 'HIGH',
-    score: 85,
-    entry_price: 432.10,
-    stop_loss: 425.00,
-    take_profit: 450.00,
-    rationale: 'Beat de earnings con guidance optimista. Setup técnico en breakout sobre SMA20.',
-  },
-  {
-    ticker: 'META',
-    direction: 'SHORT',
-    conviction: 'MEDIUM',
-    score: 68,
-    entry_price: 480.50,
-    stop_loss: 488.00,
-    take_profit: 465.00,
-    rationale: 'Anuncio regulatorio negativo. RSI sobrecomprado, divergencia bajista.',
-  },
-  {
-    ticker: 'AAPL',
-    direction: 'HOLD',
-    conviction: 'LOW',
-    score: 45,
-    entry_price: 195.30,
-    stop_loss: null,
-    take_profit: null,
-    rationale: 'Señales mixtas: catalizador neutro, RSI en zona media, sin convicción direccional clara.',
-  },
-]);
-show(0);
-const text2 = captured[0].body.text;
-assert(/NVDA/.test(text2), 'incluye NVDA');
-assert(/META/.test(text2), 'incluye META');
-assert(/AAPL/.test(text2), 'incluye AAPL');
-assert(/LONG/.test(text2), 'menciona LONG');
-assert(/SHORT/.test(text2), 'menciona SHORT');
-assert(/HOLD/.test(text2), 'menciona HOLD');
-assert(/3 señal/.test(text2), 'header dice "3 señal(es)"');
-assert(/2 accionable/.test(text2), 'menciona 2 accionables');
-assert(/entry <code>\$432\.10<\/code>/.test(text2), 'NVDA tiene entry $432.10');
-assert(/R:R 2\.52/.test(text2), 'NVDA R:R calculado (18/7.10 ≈ 2.54)');
-// AAPL es HOLD: NO debe tener entry/stop/target en su sección
-const aaplSection = text2.split('AAPL')[1] ?? '';
-assert(!/entry <code>\$195/.test(aaplSection.split('NVDA')[0] ?? aaplSection),
-  'AAPL (HOLD) no muestra entry/stop/target');
+await sendTelegram('hola', '-100OTRO');
+assert(captured[0].body.chat_id === '-100OTRO', 'respeta el chat_id override');
 
-// ─── Test 3: rationale con caracteres especiales ────────────────────────
-divider('Test 3 — rationale con < > & que podrían romper HTML');
-captured.length = 0;
-await notifySignals([
-  {
-    ticker: 'TSLA',
-    direction: 'LONG',
-    conviction: 'MEDIUM',
-    score: 72,
-    entry_price: 250.00,
-    stop_loss: 240.00,
-    take_profit: 270.00,
-    rationale: 'Margin > 20% & guidance < expectativa previa. Setup OK.',
-  },
-]);
-show(0);
-const text3 = captured[0].body.text;
-assert(/Margin &gt; 20% &amp; guidance &lt; expectativa/.test(text3),
-  'caracteres <, >, & están escapados a HTML entities');
-assert(!/Margin > 20% &/.test(text3), 'no quedan caracteres HTML crudos');
-
-// ─── Test 4: rationale con _ y * (que rompían Markdown) ────────────────
-divider('Test 4 — rationale con _ y * (que rompían parse_mode=Markdown)');
-captured.length = 0;
-await notifySignals([
-  {
-    ticker: 'AMZN',
-    direction: 'LONG',
-    conviction: 'HIGH',
-    score: 82,
-    entry_price: 180.00,
-    stop_loss: 175.00,
-    take_profit: 190.00,
-    rationale: 'AWS *crece* 19% YoY. Tasa _libre_ de riesgo estable.',
-  },
-]);
-show(0);
-const text4 = captured[0].body.text;
-// En HTML, _ y * no son especiales: deben pasar tal cual
-assert(/AWS \*crece\* 19% YoY/.test(text4), 'asteriscos pasan tal cual en HTML');
-assert(/Tasa _libre_ de riesgo/.test(text4), 'guiones bajos pasan tal cual en HTML');
-
-// ─── Test 5: notifyTradeClosed ──────────────────────────────────────────
-divider('Test 5 — notifyTradeClosed (win y loss)');
-captured.length = 0;
-await notifyTradeClosed({
+// ─── Test 3: formatSignalBody con plan (LONG) ───────────────────────────
+divider('Test 3 — formatSignalBody (LONG con R:R)');
+const longBody = formatSignalBody({
   ticker: 'NVDA',
   direction: 'LONG',
-  pnl_usd: 145.30,
+  conviction: 'HIGH',
+  score: 85,
+  entry_price: 432.1,
+  stop_loss: 425.0,
+  take_profit: 450.0,
+  rationale: 'Beat de earnings con guidance optimista.',
+});
+console.log(longBody);
+assert(/entry <code>\$432\.10<\/code>/.test(longBody), 'entry formateado');
+assert(/R:R 2\.52/.test(longBody), 'R:R calculado (17.9/7.1 ≈ 2.52)');
+
+// ─── Test 4: HOLD no muestra plan ───────────────────────────────────────
+divider('Test 4 — formatSignalBody (HOLD sin plan)');
+const holdBody = formatSignalBody({
+  ticker: 'AAPL',
+  direction: 'HOLD',
+  conviction: 'LOW',
+  score: 45,
+  entry_price: 195.3,
+  stop_loss: null,
+  take_profit: null,
+  rationale: 'Señales mixtas, sin convicción direccional.',
+});
+assert(!/entry <code>/.test(holdBody), 'HOLD no muestra entry/stop/target');
+
+// ─── Test 5: escape de caracteres HTML en el rationale ──────────────────
+divider('Test 5 — escapeHtml en rationale (< > &)');
+const escBody = formatSignalBody({
+  ticker: 'TSLA',
+  direction: 'LONG',
+  conviction: 'MEDIUM',
+  score: 72,
+  entry_price: 250,
+  stop_loss: 240,
+  take_profit: 270,
+  rationale: 'Margin > 20% & guidance < previa.',
+});
+assert(/Margin &gt; 20% &amp; guidance &lt; previa/.test(escBody),
+  '<, >, & escapados a entities');
+assert(!/Margin > 20% &/.test(escBody), 'no quedan caracteres HTML crudos');
+
+// ─── Test 6: _ y * pasan tal cual (no son especiales en HTML) ───────────
+divider('Test 6 — _ y * pasan tal cual (HTML, no Markdown)');
+const mdBody = formatSignalBody({
+  ticker: 'AMZN',
+  direction: 'LONG',
+  conviction: 'HIGH',
+  score: 82,
+  entry_price: 180,
+  stop_loss: 175,
+  take_profit: 190,
+  rationale: 'AWS *crece* 19% YoY. Tasa _libre_ de riesgo estable.',
+});
+assert(/AWS \*crece\* 19% YoY/.test(mdBody), 'asteriscos sin tocar');
+assert(/Tasa _libre_ de riesgo/.test(mdBody), 'guiones bajos sin tocar');
+
+// ─── Test 7: headline + formatTradeClosedBody ───────────────────────────
+divider('Test 7 — headline y trade cerrado');
+const headline = formatSignalHeadline({
+  ticker: 'NVDA',
+  direction: 'LONG',
+  conviction: 'HIGH',
+  score: 85,
+  entry_price: 432.1,
+  stop_loss: 425,
+  take_profit: 450,
+  rationale: '',
+});
+assert(/🎯/.test(headline) && /NVDA/.test(headline) && /85\/100/.test(headline),
+  'headline incluye badge, ticker y score');
+
+const win = formatTradeClosedBody({
+  ticker: 'NVDA',
+  direction: 'LONG',
+  pnl_usd: 145.3,
   pnl_pct: 4.2,
   exit_reason: 'target',
 });
-show(0);
-const text5 = captured[0].body.text;
-assert(/✅/.test(text5), 'win usa ✅');
-assert(/\+\$145\.30/.test(text5), 'P&L formateado con signo');
-assert(/P&amp;L/.test(text5), 'P&L escapa el ampersand');
+assert(/\+\$145\.30/.test(win), 'win con signo +');
+assert(/P&amp;L/.test(win), 'P&L escapa el ampersand');
 
-captured.length = 0;
-await notifyTradeClosed({
+const loss = formatTradeClosedBody({
   ticker: 'META',
   direction: 'SHORT',
-  pnl_usd: -85.10,
+  pnl_usd: -85.1,
   pnl_pct: -2.1,
   exit_reason: 'stop',
 });
-show(0);
-const text5b = captured[0].body.text;
-assert(/🛑/.test(text5b), 'loss usa 🛑');
-assert(/-\$85\.10/.test(text5b), 'loss tiene signo negativo');
+assert(/-\$85\.10/.test(loss), 'loss con signo -');
 
-// ─── Test 6: sin credenciales → no-op silencioso ────────────────────────
-divider('Test 6 — sin credenciales (no-op silencioso)');
+// ─── Test 8: sin credenciales → no-op silencioso ────────────────────────
+divider('Test 8 — sin credenciales (no-op silencioso)');
 delete process.env.TELEGRAM_BOT_TOKEN;
 delete process.env.TELEGRAM_CHAT_ID;
 captured.length = 0;
 const sent = await sendTelegram('hola');
-console.log('sendTelegram returned:', sent);
-console.log('captured.length:', captured.length);
 assert(sent === false, 'sendTelegram devuelve false sin credenciales');
 assert(captured.length === 0, 'NO se hizo ninguna llamada HTTP');
+
+// escapeHtml directo
+assert(escapeHtml('a<b>&c') === 'a&lt;b&gt;&amp;c', 'escapeHtml básico');
 
 // ─── Resultado ──────────────────────────────────────────────────────────
 console.log('\n' + '═'.repeat(72));

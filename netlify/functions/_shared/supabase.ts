@@ -73,7 +73,7 @@ export async function logRunComplete(
   const supabase = getSupabase();
   const startedAt = await supabase
     .from('function_runs')
-    .select('started_at')
+    .select('started_at, function_name')
     .eq('id', runId)
     .single();
 
@@ -90,4 +90,28 @@ export async function logRunComplete(
       ...payload,
     })
     .eq('id', runId);
+
+  // Alerta proactiva si un cron falla. Import dinámico para evitar ciclo
+  // de dependencias (notify.ts importa este módulo).
+  if (status === 'error') {
+    try {
+      const fn = startedAt.data?.function_name ?? 'unknown';
+      const now = new Date();
+      const date = now.toISOString().slice(0, 10);
+      const hour = now.getUTCHours();
+      const { notify } = await import('./notify.ts');
+      await notify({
+        type: 'system_error',
+        severity: 'critical',
+        dedup_key: `system_error:${fn}:${date}:${hour}`,
+        title: `🚨 Falla en ${fn}`,
+        body: payload.error_message
+          ? `Error: ${String(payload.error_message).slice(0, 300)}`
+          : 'El cron terminó con estado error.',
+        payload: { function_name: fn, run_id: runId },
+      });
+    } catch (e) {
+      console.error('[supabase] system_error notify failed:', e);
+    }
+  }
 }

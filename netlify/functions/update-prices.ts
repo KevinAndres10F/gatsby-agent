@@ -9,15 +9,20 @@
 import type { Config } from '@netlify/functions';
 import { getSupabase, logRunStart, logRunComplete } from './_shared/supabase.ts';
 import { getFinnhubQuote } from './_shared/finnhub.ts';
-import { notifyTradeClosed } from './_shared/telegram.ts';
+import { notify } from './_shared/notify.ts';
+import { formatTradeClosedBody, escapeHtml } from './_shared/telegram.ts';
 
 export const config: Config = {
   schedule: '0 14,16,18,20 * * 1-5',
 };
 
+// Avisar cuando el precio entra dentro de este % del stop o del target.
+const STOP_PROXIMITY_PCT = parseFloat(process.env.STOP_PROXIMITY_PCT ?? '1.5');
+
 export default async () => {
   const runId = await logRunStart('update-prices');
   const supabase = getSupabase();
+  const today = new Date().toISOString().slice(0, 10);
 
   try {
     const { data: openTrades, error } = await supabase
@@ -91,14 +96,43 @@ export default async () => {
         }
         closed++;
 
-        // Notificación Telegram (fire-and-forget, no rompe el cron si falla)
-        notifyTradeClosed({
-          ticker: t.ticker,
-          direction: t.direction,
-          pnl_usd: pnlUsd,
-          pnl_pct: pnlPct,
-          exit_reason: hitStop ? 'stop' : 'target',
-        }).catch((e) => console.error('[update-prices] telegram failed:', e));
+        const win = pnlUsd >= 0;
+        await notify({
+          type: 'trade_closed',
+          severity: 'info',
+          dedup_key: `trade_closed:${t.id}`,
+          title: `${win ? '✅' : '🛑'} ${t.ticker} cerrado`,
+          body: formatTradeClosedBody({
+            ticker: t.ticker,
+            direction: t.direction,
+            pnl_usd: pnlUsd,
+            pnl_pct: pnlPct,
+            exit_reason: hitStop ? 'stop' : 'target',
+          }),
+          payload: { trade_id: t.id, pnl_usd: pnlUsd, pnl_pct: pnlPct },
+        }).catch((e) => console.error('[update-prices] notify failed:', e));
+      } else if (t.stop_loss != null && t.take_profit != null) {
+        // Proximidad a stop/target (máximo una alerta por trade y día).
+        const distStopPct = (Math.abs(quote.price - t.stop_loss) / quote.price) * 100;
+        const distTargetPct =
+          (Math.abs(quote.price - t.take_profit) / quote.price) * 100;
+        const nearStop = distStopPct <= STOP_PROXIMITY_PCT;
+        const nearTarget = distTargetPct <= STOP_PROXIMITY_PCT;
+        if (nearStop || nearTarget) {
+          const which = nearStop ? 'stop' : 'target';
+          await notify({
+            type: 'stop_proximity',
+            severity: 'warning',
+            dedup_key: `stop_proximity:${t.id}:${today}:${which}`,
+            title: `⚠️ ${t.ticker} cerca de ${which}`,
+            body:
+              `<b>${escapeHtml(t.ticker)}</b> ${escapeHtml(t.direction)} a ` +
+              `<code>$${quote.price.toFixed(2)}</code> · ` +
+              `${which} <code>$${(nearStop ? t.stop_loss : t.take_profit).toFixed(2)}</code> ` +
+              `(${(nearStop ? distStopPct : distTargetPct).toFixed(2)}%)`,
+            payload: { trade_id: t.id, price: quote.price, which },
+          }).catch((e) => console.error('[update-prices] proximity notify failed:', e));
+        }
       }
 
       await new Promise((r) => setTimeout(r, 1300));

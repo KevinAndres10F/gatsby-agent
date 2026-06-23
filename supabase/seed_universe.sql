@@ -128,3 +128,14 @@ INSERT INTO universe (ticker, name, sector, indices) VALUES
 ('MDB', 'MongoDB Inc.', 'Technology', ARRAY['SP500']),
 ('TEAM', 'Atlassian Corp.', 'Technology', ARRAY['NASDAQ100'])
 ON CONFLICT (ticker) DO NOTHING;
+
+-- =============================================================
+-- ETFs líquidos (watchlist). Sector 'ETF', índice 'ETF'.
+-- discovery.ts los inyecta como candidatos fijos (ETF_WATCHLIST).
+-- =============================================================
+INSERT INTO universe (ticker, name, sector, indices) VALUES
+('SPY', 'SPDR S&P 500 ETF Trust', 'ETF', ARRAY['ETF']),
+('QQQ', 'Invesco QQQ Trust (NASDAQ-100)', 'ETF', ARRAY['ETF']),
+('XLK', 'Technology Select Sector SPDR', 'ETF', ARRAY['ETF']),
+('XLE', 'Energy Select Sector SPDR', 'ETF', ARRAY['ETF'])
+ON CONFLICT (ticker) DO NOTHING;

@@ -7,6 +7,7 @@ import Portfolio from './pages/Portfolio';
 import Performance from './pages/Performance';
 import Backtest from './pages/Backtest';
 import Health from './pages/Health';
+import Settings from './pages/Settings';
 import Login from './pages/Login';
 import { useAuth } from './lib/auth';
 
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/performance" element={<Performance />} />
             <Route path="/backtest" element={<Backtest />} />
             <Route path="/health" element={<Health />} />
+            <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
       </div>

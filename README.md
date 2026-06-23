@@ -55,8 +55,9 @@ git push -u origin main
 2. Anota la `Project URL`, la `anon` key (para frontend) y la `service_role` key (para backend). En Settings → API.
 3. Abre el SQL Editor y ejecuta **en este orden**:
    - `supabase/schema.sql` — tablas, vistas e índices base
-   - `supabase/seed_universe.sql` — ~120 tickers iniciales
+   - `supabase/seed_universe.sql` — ~120 tickers + ETFs (SPY/QQQ/XLK/XLE)
    - `supabase/migrations_v2.sql` — fase 2: benchmark, backtest, multi-usuario + RLS
+   - `supabase/migrations_v3_notifications.sql` — fase 3: notificaciones (tabla `notifications` + `notification_prefs`) y columnas de riesgo en `signals`
 
 ### 3. Conseguir API keys gratis
 
@@ -87,7 +88,11 @@ VITE_SUPABASE_ANON_KEY=eyJ...   # anon (mismo proyecto)
 
 # Telegram (opcional — si no se setean, las notificaciones son no-op)
 TELEGRAM_BOT_TOKEN=123:ABC...
-TELEGRAM_CHAT_ID=-100123...      # tu chat o canal
+TELEGRAM_CHAT_ID=-100123...      # chat por defecto / fallback single-user
+
+# Notificaciones y Risk Manager (opcionales)
+STOP_PROXIMITY_PCT=1.5           # % para avisar proximidad a stop/target
+RISK_REVIEW_MODEL=               # vacío = Opus 4.8; o claude-sonnet-4-6
 ```
 
 4. Trigger un deploy. Las **Scheduled Functions** se registran automáticamente.
@@ -150,10 +155,38 @@ Después de unos minutos, abre el dashboard. Deberías ver señales pobladas en 
 - Persiste cada run y sus trades en `backtest_runs` / `backtest_trades`
 - Devuelve hit rate, retorno, Sharpe/Sortino y max drawdown
 
-### Notificaciones Telegram
-- HIGH conviction signals → `analyze` te envía el resumen al canal
-- Trades cerrados por stop/target → `update-prices` te avisa
-- Si no configuras `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, son no-op silenciosos
+### Notificaciones
+Todas las notificaciones pasan por una capa única (`_shared/notify.ts`): se
+**persisten** en la tabla `notifications`, se **deduplican** por `dedup_key`, se
+filtran por las **preferencias del usuario** (`notification_prefs`: canales,
+severidad mínima, horas de silencio) y se rutean por usuario. Canal actual:
+Telegram (el diseño deja listos email/in-app como adaptadores futuros).
+
+Tipos de alerta:
+- `signal_high` — señales HIGH **aprobadas por el Risk Manager** (`analyze`)
+- `digest_morning` — resumen matutino de las señales del día (`analyze`)
+- `trade_closed` — cierre por stop/target (`update-prices`)
+- `stop_proximity` — precio dentro de `STOP_PROXIMITY_PCT` del stop/target (`update-prices`)
+- `digest_eod` — P&L de cierre de mercado (`end-of-day`)
+- `system_error` — **crítica**: un cron terminó en error (`logRunComplete`)
+
+Configura el bot con `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` (si faltan, son
+no-op silenciosos). Personaliza canales, severidad y horas de silencio por
+usuario en **Ajustes** (`/settings`); cada usuario puede registrar su propio
+`telegram_chat_id`.
+
+### Risk Manager (segunda opinión multi-agente)
+Tras generar las señales, un segundo pase con **Claude Opus 4.8** actúa como
+Risk Manager: revisa el top N, **aprueba/veta** cada señal, ajusta la convicción
+y registra `risk_flags`/`risk_rationale` en `signals`. Solo las señales HIGH que
+pasan esta revisión disparan alerta HIGH y auto-execute. Configurable con
+`RISK_REVIEW_MODEL` (ej. `claude-sonnet-4-6` para abaratar).
+
+### ETFs
+El universo incluye ETFs líquidos (SPY, QQQ, XLK, XLE). Como `TOP_GAINERS_LOSERS`
+de Alpha Vantage es solo acciones, `discovery` los inyecta como watchlist fija
+(`ETF_WATCHLIST`). CFDs no están soportados por los proveedores actuales
+(requeriría otro feed tipo OANDA/IG).
 
 ### Multi-usuario (Supabase Auth)
 - Email + password con Supabase Auth
@@ -244,18 +277,20 @@ cuantitativo-agent/
 ├── netlify.toml                     # config + crons
 ├── supabase/
 │   ├── schema.sql                   # tablas, vistas, índices base
-│   ├── seed_universe.sql            # ~120 tickers iniciales
-│   └── migrations_v2.sql            # fase 2: benchmark, backtest, auth + RLS
+│   ├── seed_universe.sql            # ~120 tickers + ETFs
+│   ├── migrations_v2.sql            # fase 2: benchmark, backtest, auth + RLS
+│   └── migrations_v3_notifications.sql  # fase 3: notifications + prefs + risk cols
 ├── netlify/functions/
 │   ├── _shared/                     # libs reutilizables
-│   │   ├── supabase.ts              # cliente DB + auth helper
-│   │   ├── claude.ts                # wrapper Anthropic + prompts
+│   │   ├── supabase.ts              # cliente DB + auth + hook system_error
+│   │   ├── claude.ts                # wrapper Anthropic + prompts + riskReview (Opus)
 │   │   ├── alphavantage.ts          # precios + top movers
 │   │   ├── finnhub.ts               # noticias + quotes
 │   │   ├── indicators.ts            # RSI / ATR / SMA en TS puro
 │   │   ├── risk.ts                  # sizing por ATR (LONG + SHORT)
 │   │   ├── metrics.ts               # Sharpe/Sortino/Calmar/MaxDD/benchmark
-│   │   └── telegram.ts              # notificaciones bot
+│   │   ├── notify.ts               # capa única de notificaciones (persist+dedup+ruteo)
+│   │   └── telegram.ts              # adaptador Telegram + formatters
 │   ├── discovery.ts                 # cron — descubre candidatos
 │   ├── analyze.ts                   # cron — LLM + señales (con cache)
 │   ├── update-prices.ts             # cron — mark-to-market + auto-close
@@ -286,6 +321,7 @@ cuantitativo-agent/
 │       ├── Portfolio.tsx
 │       ├── Performance.tsx          # equity + advanced + benchmark
 │       ├── Backtest.tsx             # ejecutar runs históricos
+│       ├── Settings.tsx             # preferencias de notificaciones
 │       └── Login.tsx                # email/password auth
 ├── docs/
 │   └── prompt_v2.md                 # decisiones de prompt engineering

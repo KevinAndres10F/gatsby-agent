@@ -13,6 +13,7 @@ import {
   SINGLE_USER_ID,
 } from './_shared/supabase.ts';
 import { getDailyHistory } from './_shared/alphavantage.ts';
+import { notify } from './_shared/notify.ts';
 
 export const config: Config = {
   schedule: '30 21 * * 1-5',
@@ -115,6 +116,20 @@ export default async () => {
       },
       { onConflict: 'user_id,date' },
     );
+
+    // Digest de cierre con P&L del día (single-user / centinela).
+    const pnlSign = dailyPnlPct >= 0 ? '+' : '';
+    await notify({
+      type: 'digest_eod',
+      severity: 'info',
+      dedup_key: `digest_eod:${today}`,
+      title: `Cierre ${today}`,
+      body:
+        `Valor total: <code>$${totalValue.toFixed(2)}</code>\n` +
+        `P&amp;L del día: <code>${pnlSign}${dailyPnlPct.toFixed(2)}%</code>\n` +
+        `Posiciones abiertas: <b>${openTrades?.length ?? 0}</b>`,
+      payload: { total_value: totalValue, daily_pnl_pct: dailyPnlPct },
+    }).catch((e) => console.error('[end-of-day] notify failed:', e));
 
     // Refrescar benchmark (SPY) para comparativa en /performance
     const benchmarkRows = await refreshBenchmark(supabase);

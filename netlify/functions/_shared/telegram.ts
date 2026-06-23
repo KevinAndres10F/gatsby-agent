@@ -1,42 +1,46 @@
 /**
- * Telegram bot client. Notifica todas las señales del día y eventos de cierre.
+ * Telegram = adaptador de canal de bajo nivel detrás de notify().
  * Env vars:
  *   TELEGRAM_BOT_TOKEN   token del bot creado con @BotFather
- *   TELEGRAM_CHAT_ID     chat o canal donde se envía
- * Si alguna está ausente, las llamadas son no-op (silenciosas).
+ *   TELEGRAM_CHAT_ID     chat/canal por defecto (fallback single-user)
+ * Si falta el token o no hay chat (ni override ni env), las llamadas son no-op.
  *
  * Usamos parse_mode='HTML' (no Markdown) para evitar fallos 400 cuando el
  * rationale del LLM contiene caracteres especiales como `_`, `*` o backticks.
+ *
+ * Las funciones de formato (escapeHtml, dirIcon, etc.) se exportan para que
+ * notify.ts construya los cuerpos de los mensajes y se reutilicen entre canales.
  */
 
 const API = 'https://api.telegram.org';
 
-function getCreds(): { token: string; chatId: string } | null {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return null;
-  return { token, chatId };
-}
-
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
 
-export async function sendTelegram(text: string): Promise<boolean> {
-  const c = getCreds();
-  if (!c) {
+/**
+ * Envía un mensaje por Telegram. `chatIdOverride` permite ruteo por usuario
+ * (notification_prefs.telegram_chat_id); si falta, cae al TELEGRAM_CHAT_ID global.
+ */
+export async function sendTelegram(
+  text: string,
+  chatIdOverride?: string | null,
+): Promise<boolean> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = chatIdOverride || process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) {
     console.log('[telegram] credentials not configured, skipping');
     return false;
   }
   try {
-    const res = await fetch(`${API}/bot${c.token}/sendMessage`, {
+    const res = await fetch(`${API}/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: c.chatId,
+        chat_id: chatId,
         text,
         parse_mode: 'HTML',
         disable_web_page_preview: true,
@@ -64,86 +68,68 @@ export interface SignalSummary {
   rationale: string;
 }
 
-function dirIcon(d: SignalSummary['direction']): string {
+export function dirIcon(d: SignalSummary['direction']): string {
   if (d === 'LONG') return '🟢 LONG';
   if (d === 'SHORT') return '🔴 SHORT';
   return '⚪ HOLD';
 }
 
-function convBadge(c: SignalSummary['conviction']): string {
+export function convBadge(c: SignalSummary['conviction']): string {
   if (c === 'HIGH') return '🎯';
   if (c === 'MEDIUM') return '🔸';
   return '🔹';
 }
 
-/**
- * Envía un mensaje con todas las señales del día. Si no hay ninguna,
- * envía un resumen "sin señales" para que sepas que el agente sí corrió.
- */
-export async function notifySignals(signals: SignalSummary[]): Promise<void> {
-  const date = new Date().toISOString().slice(0, 10);
-
-  if (signals.length === 0) {
-    await sendTelegram(
-      `📊 <b>Reporte ${date}</b>\nEl agente corrió pero no encontró señales accionables hoy.`,
-    );
-    return;
-  }
-
-  const actionable = signals.filter((s) => s.direction !== 'HOLD').length;
-  const header =
-    `📊 <b>${signals.length} señal(es) · ${date}</b>` +
-    (actionable < signals.length
-      ? `\n<i>${actionable} accionable(s) · ${signals.length - actionable} en HOLD</i>`
-      : '');
-
-  const body = signals
-    .map((s) => {
-      const head =
-        `\n${convBadge(s.conviction)} <b>${escapeHtml(s.ticker)}</b> ${dirIcon(s.direction)}` +
-        ` · score <b>${s.score}/100</b> · ${s.conviction}`;
-
-      const hasPlan =
-        s.direction !== 'HOLD' &&
-        s.entry_price != null &&
-        s.stop_loss != null &&
-        s.take_profit != null;
-
-      if (!hasPlan) {
-        return [head, `<i>${escapeHtml(s.rationale)}</i>`].join('\n');
-      }
-
-      const rr =
-        Math.abs((s.take_profit as number) - (s.entry_price as number)) /
-        Math.max(Math.abs((s.entry_price as number) - (s.stop_loss as number)), 0.01);
-
-      return [
-        head + ` · R:R ${rr.toFixed(2)}`,
-        `entry <code>$${(s.entry_price as number).toFixed(2)}</code>  ` +
-          `stop <code>$${(s.stop_loss as number).toFixed(2)}</code>  ` +
-          `target <code>$${(s.take_profit as number).toFixed(2)}</code>`,
-        `<i>${escapeHtml(s.rationale)}</i>`,
-      ].join('\n');
-    })
-    .join('\n');
-
-  await sendTelegram(header + body);
+/** Línea de cabecera de una señal: "🎯 TICKER 🟢 LONG · score 85/100 · HIGH" */
+export function formatSignalHeadline(s: SignalSummary): string {
+  return (
+    `${convBadge(s.conviction)} <b>${escapeHtml(s.ticker)}</b> ${dirIcon(s.direction)}` +
+    ` · score <b>${s.score}/100</b> · ${s.conviction}`
+  );
 }
 
-export async function notifyTradeClosed(payload: {
+/**
+ * Cuerpo HTML de una señal (plan de trade + rationale), sin la cabecera.
+ * Apto para Telegram y reutilizable por otros canales.
+ */
+export function formatSignalBody(s: SignalSummary): string {
+  const hasPlan =
+    s.direction !== 'HOLD' &&
+    s.entry_price != null &&
+    s.stop_loss != null &&
+    s.take_profit != null;
+
+  if (!hasPlan) {
+    return `<i>${escapeHtml(s.rationale)}</i>`;
+  }
+
+  const rr =
+    Math.abs((s.take_profit as number) - (s.entry_price as number)) /
+    Math.max(Math.abs((s.entry_price as number) - (s.stop_loss as number)), 0.01);
+
+  return [
+    `R:R ${rr.toFixed(2)}`,
+    `entry <code>$${(s.entry_price as number).toFixed(2)}</code>  ` +
+      `stop <code>$${(s.stop_loss as number).toFixed(2)}</code>  ` +
+      `target <code>$${(s.take_profit as number).toFixed(2)}</code>`,
+    `<i>${escapeHtml(s.rationale)}</i>`,
+  ].join('\n');
+}
+
+export function formatTradeClosedBody(payload: {
   ticker: string;
   direction: string;
   pnl_usd: number;
   pnl_pct: number;
   exit_reason: string;
-}): Promise<void> {
+}): string {
   const win = payload.pnl_usd >= 0;
-  const emoji = win ? '✅' : '🛑';
   const sign = win ? '+' : '-';
   const absUsd = Math.abs(payload.pnl_usd).toFixed(2);
   const absPct = Math.abs(payload.pnl_pct).toFixed(2);
-  const text =
-    `${emoji} <b>${escapeHtml(payload.ticker)}</b> ${escapeHtml(payload.direction)} cerrado por <b>${escapeHtml(payload.exit_reason)}</b>\n` +
-    `P&amp;L: <code>${sign}$${absUsd}</code> (<code>${sign}${absPct}%</code>)`;
-  await sendTelegram(text);
+  return (
+    `${escapeHtml(payload.ticker)} ${escapeHtml(payload.direction)} cerrado por ` +
+    `<b>${escapeHtml(payload.exit_reason)}</b>\n` +
+    `P&amp;L: <code>${sign}$${absUsd}</code> (<code>${sign}${absPct}%</code>)`
+  );
 }

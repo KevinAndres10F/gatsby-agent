@@ -21,11 +21,18 @@ import { computeIndicators } from './_shared/indicators.ts';
 import {
   analyzeNews,
   generateSignals,
+  riskReview,
   type NewsItem,
   type SignalContext,
+  type RiskVerdict,
 } from './_shared/claude.ts';
 import { planTrade } from './_shared/risk.ts';
-import { notifySignals, type SignalSummary } from './_shared/telegram.ts';
+import {
+  formatSignalHeadline,
+  formatSignalBody,
+  type SignalSummary,
+} from './_shared/telegram.ts';
+import { notify } from './_shared/notify.ts';
 import { executeSignal } from './_shared/execute.ts';
 
 export const config: Config = {
@@ -108,9 +115,13 @@ export default async () => {
 
     if (!candidates || candidates.length === 0) {
       console.log('[analyze] No candidates with news today.');
-      await notifySignals([]).catch((e) =>
-        console.error('[analyze] telegram notify failed:', e),
-      );
+      await notify({
+        type: 'digest_morning',
+        severity: 'info',
+        dedup_key: `digest_morning:${today}`,
+        title: `Reporte ${today}`,
+        body: 'El agente corrió pero no encontró señales accionables hoy.',
+      }).catch((e) => console.error('[analyze] notify failed:', e));
       await logRunComplete(runId, 'success', { records_processed: 0 });
       return new Response(JSON.stringify({ ok: true, signals: 0 }));
     }
@@ -132,9 +143,13 @@ export default async () => {
 
     if (!newsRows || newsRows.length === 0) {
       console.log('[analyze] No new news to analyze.');
-      await notifySignals([]).catch((e) =>
-        console.error('[analyze] telegram notify failed:', e),
-      );
+      await notify({
+        type: 'digest_morning',
+        severity: 'info',
+        dedup_key: `digest_morning:${today}`,
+        title: `Reporte ${today}`,
+        body: 'El agente corrió pero no encontró señales accionables hoy.',
+      }).catch((e) => console.error('[analyze] notify failed:', e));
       await logRunComplete(runId, 'success', { records_processed: 0 });
       return new Response(JSON.stringify({ ok: true, signals: 0 }));
     }
@@ -249,9 +264,13 @@ export default async () => {
     console.log(`[analyze] Bars: ${cachedCount} cached / ${fetchedCount} fetched`);
 
     if (contexts.length === 0) {
-      await notifySignals([]).catch((e) =>
-        console.error('[analyze] telegram notify failed:', e),
-      );
+      await notify({
+        type: 'digest_morning',
+        severity: 'info',
+        dedup_key: `digest_morning:${today}`,
+        title: `Reporte ${today}`,
+        body: 'El agente corrió pero no encontró señales accionables hoy.',
+      }).catch((e) => console.error('[analyze] notify failed:', e));
       await logRunComplete(runId, 'partial', {
         records_processed: 0,
         llm_tokens_used: totalTokensIn + totalTokensOut,
@@ -273,6 +292,21 @@ export default async () => {
       .sort((a, b) => b.score - a.score)
       .slice(0, TOP_N_FINAL_SIGNALS);
 
+    // ---- 5b. Segunda opinión del Risk Manager (Opus) sobre el top N ----
+    const riskByTicker = new Map<string, RiskVerdict>();
+    try {
+      const riskResult = await riskReview(ranked, contexts);
+      totalTokensIn += riskResult.usage.input_tokens;
+      totalTokensOut += riskResult.usage.output_tokens;
+      totalCost += riskResult.usage.cost_usd;
+      for (const v of riskResult.verdicts) riskByTicker.set(v.ticker, v);
+      console.log(
+        `[analyze] Risk review: ${riskResult.verdicts.filter((v) => v.approved).length}/${ranked.length} aprobadas`,
+      );
+    } catch (e) {
+      console.error('[analyze] risk review failed (continuamos sin gating):', e);
+    }
+
     // ---- 6. Persistir señales (con plan solo para LONG/SHORT) ----
     const { data: portfolio } = await supabase
       .from('portfolio')
@@ -281,12 +315,17 @@ export default async () => {
       .limit(1)
       .single();
 
-    type InsertedSignal = SignalSummary & { id: number };
+    type InsertedSignal = SignalSummary & { id: number; risk_approved: boolean };
     const insertedSignals: InsertedSignal[] = [];
 
     for (const sig of ranked) {
       const ctx = contexts.find((c) => c.ticker === sig.ticker);
       if (!ctx) continue;
+
+      const verdict = riskByTicker.get(sig.ticker);
+      // El Risk Manager puede degradar (rara vez subir) la convicción.
+      const finalConviction = verdict?.adjusted_conviction ?? sig.conviction;
+      const riskApproved = verdict?.approved ?? true;
 
       const isActionable = sig.direction === 'LONG' || sig.direction === 'SHORT';
       const plan = isActionable && ctx.technical.atr_14
@@ -319,7 +358,7 @@ export default async () => {
             date: today,
             score: sig.score,
             direction: sig.direction,
-            conviction: sig.conviction,
+            conviction: finalConviction,
             entry_price: entryPrice,
             stop_loss: stopLoss,
             take_profit: takeProfit,
@@ -328,6 +367,9 @@ export default async () => {
             sentiment_score: sig.sentiment_score,
             rationale: sig.rationale,
             news_ids: newsIds,
+            risk_approved: verdict?.approved ?? null,
+            risk_flags: verdict?.risk_flags ?? null,
+            risk_rationale: verdict?.risk_rationale ?? null,
           },
           { onConflict: 'ticker,date' },
         )
@@ -343,7 +385,8 @@ export default async () => {
           stop_loss: stopLoss,
           take_profit: takeProfit,
           rationale: sig.rationale,
-          conviction: sig.conviction,
+          conviction: finalConviction,
+          risk_approved: riskApproved,
         });
       }
     }
@@ -351,17 +394,38 @@ export default async () => {
     const actionableCount = insertedSignals.filter(
       (s) => s.direction !== 'HOLD',
     ).length;
-    const highConviction = insertedSignals.filter((s) => s.conviction === 'HIGH');
+    // HIGH "accionable" = convicción HIGH que además pasó el Risk Manager.
+    const highConviction = insertedSignals.filter(
+      (s) => s.conviction === 'HIGH' && s.risk_approved,
+    );
     console.log(
-      `[analyze] Signals generated: ${insertedSignals.length} (${actionableCount} actionable, ${highConviction.length} HIGH)`,
+      `[analyze] Signals generated: ${insertedSignals.length} (${actionableCount} actionable, ${highConviction.length} HIGH aprobadas)`,
     );
 
-    // ---- 7. Notificación Telegram (todas las señales del día) ----
-    try {
-      await notifySignals(insertedSignals);
-    } catch (e) {
-      console.error('[analyze] telegram notify failed:', e);
+    // ---- 7. Notificaciones ----
+    // 7a. Alerta individual por cada señal HIGH aprobada por el Risk Manager.
+    for (const s of highConviction) {
+      await notify({
+        type: 'signal_high',
+        severity: 'warning',
+        dedup_key: `signal_high:${s.ticker}:${today}`,
+        title: `Señal HIGH · ${s.ticker} ${s.direction}`,
+        body: `${formatSignalHeadline(s)}\n${formatSignalBody(s)}`,
+        payload: { signal_id: s.id, ticker: s.ticker, direction: s.direction },
+      }).catch((e) => console.error('[analyze] notify HIGH failed:', e));
     }
+
+    // 7b. Digest matutino con el resumen de todas las señales del día.
+    const digestBody = insertedSignals
+      .map((s) => formatSignalHeadline(s))
+      .join('\n');
+    await notify({
+      type: 'digest_morning',
+      severity: 'info',
+      dedup_key: `digest_morning:${today}`,
+      title: `${insertedSignals.length} señal(es) · ${actionableCount} accionable(s)`,
+      body: digestBody || 'Sin señales accionables hoy.',
+    }).catch((e) => console.error('[analyze] digest failed:', e));
 
     // ---- 8. Auto-execute HIGH conviction (opt-in, solo single-user) ----
     let autoExecuted = 0;

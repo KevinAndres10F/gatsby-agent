@@ -9,6 +9,7 @@ import {
   X,
   History,
   HeartPulse,
+  Settings as SettingsIcon,
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
@@ -20,6 +21,7 @@ const items = [
   { to: '/performance', label: 'Performance', icon: TrendingUp },
   { to: '/backtest', label: 'Backtest', icon: History },
   { to: '/health', label: 'Health', icon: HeartPulse },
+  { to: '/settings', label: 'Ajustes', icon: SettingsIcon },
 ];
 
 export default function Sidebar() {

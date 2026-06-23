@@ -25,6 +25,11 @@ const MIN_MOVE_PCT = 1.5;        // movimiento mínimo del día (%)
 const MAX_MOVE_PCT = 20;         // descarta moves extremos (probable noise)
 const NEWS_LOOKBACK_DAYS = 3;    // captura noticias frescas que analyze pueda no haber visto aún
 
+// ETFs líquidos: TOP_GAINERS_LOSERS de Alpha Vantage es solo acciones, así que
+// los ETFs no surgen como movers. Los inyectamos como watchlist fija para que
+// el agente igual los considere. Mantener corta (<5) por la cuota de 25 req/día.
+const ETF_WATCHLIST = ['SPY', 'QQQ', 'XLK', 'XLE'];
+
 export default async () => {
   const runId = await logRunStart('discovery');
   const supabase = getSupabase();
@@ -84,6 +89,14 @@ export default async () => {
       (a, b) => Math.abs(b.metrics.change_pct) - Math.abs(a.metrics.change_pct),
     );
     candidates = candidates.slice(0, MAX_CANDIDATES);
+
+    // Inyectar ETFs de la watchlist (que estén activos en el universo) si no
+    // entraron ya por movers. Siempre se incluyen, más allá de MAX_CANDIDATES.
+    for (const etf of ETF_WATCHLIST) {
+      if (!universeSet.has(etf)) continue;
+      if (candidatesMap.has(etf)) continue;
+      candidates.push({ ticker: etf, reason: 'watchlist', metrics: {} });
+    }
     console.log(`[discovery] Filtered candidates: ${candidates.length}`);
 
     if (candidates.length === 0) {
