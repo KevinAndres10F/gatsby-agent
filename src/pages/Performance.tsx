@@ -14,10 +14,12 @@ import {
 import { apiGet, fmtUsd, fmtPct, fmtDate, fmtNum } from '../lib/api';
 import type { Performance } from '../lib/api';
 import StatCard from '../components/StatCard';
+import { useTheme } from '../lib/theme';
 
 export default function PerformancePage() {
   const [perf, setPerf] = useState<Performance | null>(null);
   const [loading, setLoading] = useState(true);
+  const { theme } = useTheme();
 
   useEffect(() => {
     apiGet<Performance>('performance')
@@ -32,6 +34,18 @@ export default function PerformancePage() {
   if (!perf) {
     return <div className="text-center py-12 text-fg-muted">Sin datos.</div>;
   }
+
+  // Colores de los charts según el tema (recharts no lee variables CSS).
+  const dark = theme === 'dark';
+  const c = {
+    grid: dark ? '#2a2a31' : '#e2e2dc',
+    axis: dark ? '#5a5a68' : '#8a8a94',
+    tipBg: dark ? '#121215' : '#ffffff',
+    tipBorder: dark ? '#2a2a31' : '#dfdfd8',
+    tipLabel: dark ? '#9090a0' : '#5a5a66',
+    amber: dark ? '#fbbf24' : '#d97706',
+    cyan: dark ? '#22d3ee' : '#0891b2',
+  };
 
   const { performance: m, advanced, equity_curve, benchmark, recent_closed_trades } = perf;
   const initial = equity_curve[0]?.total_value ?? 10000;
@@ -141,20 +155,20 @@ export default function PerformancePage() {
               <ComposedChart data={chartData}>
                 <defs>
                   <linearGradient id="eq" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.25} />
-                    <stop offset="100%" stopColor="#fbbf24" stopOpacity={0} />
+                    <stop offset="0%" stopColor={c.amber} stopOpacity={0.25} />
+                    <stop offset="100%" stopColor={c.amber} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="#2a2a31" strokeDasharray="2 4" vertical={false} />
+                <CartesianGrid stroke={c.grid} strokeDasharray="2 4" vertical={false} />
                 <XAxis
                   dataKey="date"
-                  stroke="#5a5a68"
+                  stroke={c.axis}
                   tick={{ fontSize: 11, fontFamily: 'IBM Plex Mono' }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  stroke="#5a5a68"
+                  stroke={c.axis}
                   tick={{ fontSize: 11, fontFamily: 'IBM Plex Mono' }}
                   axisLine={false}
                   tickLine={false}
@@ -163,29 +177,29 @@ export default function PerformancePage() {
                 />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#121215',
-                    border: '1px solid #2a2a31',
+                    backgroundColor: c.tipBg,
+                    border: `1px solid ${c.tipBorder}`,
                     borderRadius: 6,
                     fontFamily: 'IBM Plex Mono',
                     fontSize: 12,
                   }}
                   formatter={(v: any) => fmtUsd(Number(v))}
-                  labelStyle={{ color: '#9090a0' }}
+                  labelStyle={{ color: c.tipLabel }}
                 />
                 <ReferenceLine
                   y={initial}
-                  stroke="#5a5a68"
+                  stroke={c.axis}
                   strokeDasharray="4 4"
-                  label={{ value: 'inicial', position: 'right', fill: '#5a5a68', fontSize: 10 }}
+                  label={{ value: 'inicial', position: 'right', fill: c.axis, fontSize: 10 }}
                 />
                 <Area type="monotone" dataKey="value" stroke="none" fill="url(#eq)" />
                 <Line
                   type="monotone"
                   dataKey="value"
-                  stroke="#fbbf24"
+                  stroke={c.amber}
                   strokeWidth={2}
                   dot={false}
-                  activeDot={{ r: 4, fill: '#fbbf24' }}
+                  activeDot={{ r: 4, fill: c.amber }}
                 />
               </ComposedChart>
             </ResponsiveContainer>
@@ -231,16 +245,16 @@ export default function PerformancePage() {
             </div>
             <ResponsiveContainer width="100%" height={260}>
               <ComposedChart data={benchmark.series.map((d) => ({ ...d, date: d.date.slice(5) }))}>
-                <CartesianGrid stroke="#2a2a31" strokeDasharray="2 4" vertical={false} />
+                <CartesianGrid stroke={c.grid} strokeDasharray="2 4" vertical={false} />
                 <XAxis
                   dataKey="date"
-                  stroke="#5a5a68"
+                  stroke={c.axis}
                   tick={{ fontSize: 11, fontFamily: 'IBM Plex Mono' }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  stroke="#5a5a68"
+                  stroke={c.axis}
                   tick={{ fontSize: 11, fontFamily: 'IBM Plex Mono' }}
                   axisLine={false}
                   tickLine={false}
@@ -248,20 +262,20 @@ export default function PerformancePage() {
                 />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#121215',
-                    border: '1px solid #2a2a31',
+                    backgroundColor: c.tipBg,
+                    border: `1px solid ${c.tipBorder}`,
                     borderRadius: 6,
                     fontFamily: 'IBM Plex Mono',
                     fontSize: 12,
                   }}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, fontFamily: 'IBM Plex Mono' }} />
-                <ReferenceLine y={100} stroke="#5a5a68" strokeDasharray="4 4" />
+                <ReferenceLine y={100} stroke={c.axis} strokeDasharray="4 4" />
                 <Line
                   type="monotone"
                   dataKey="strategy"
                   name="estrategia"
-                  stroke="#fbbf24"
+                  stroke={c.amber}
                   strokeWidth={2}
                   dot={false}
                 />
@@ -269,7 +283,7 @@ export default function PerformancePage() {
                   type="monotone"
                   dataKey="benchmark"
                   name="SPY"
-                  stroke="#22d3ee"
+                  stroke={c.cyan}
                   strokeWidth={2}
                   dot={false}
                 />
@@ -343,7 +357,8 @@ export default function PerformancePage() {
         {recent_closed_trades.length === 0 ? (
           <div className="p-8 text-center text-fg-muted">Aún no hay cierres.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="table-scroll">
+          <table className="w-full text-sm min-w-[34rem]">
             <thead className="bg-bg-surface/50 text-2xs uppercase tracking-widest text-fg-muted">
               <tr>
                 <th className="text-left px-4 py-2.5">Ticker</th>
@@ -375,6 +390,7 @@ export default function PerformancePage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
     </div>

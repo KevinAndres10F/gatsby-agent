@@ -121,7 +121,8 @@ export default function Portfolio() {
               Sin posiciones abiertas. Ejecuta una señal desde el dashboard.
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <div className="table-scroll">
+            <table className="w-full text-sm min-w-[52rem]">
               <thead className="bg-bg-surface text-2xs uppercase tracking-widest text-fg-muted">
                 <tr>
                   <th className="text-left px-4 py-3">Ticker</th>
@@ -191,6 +192,7 @@ export default function Portfolio() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
@@ -201,7 +203,8 @@ export default function Portfolio() {
           {closedTrades.length === 0 ? (
             <div className="p-8 text-center text-fg-muted">Aún no hay trades cerrados.</div>
           ) : (
-            <table className="w-full text-sm">
+            <div className="table-scroll">
+            <table className="w-full text-sm min-w-[40rem]">
               <thead className="bg-bg-surface text-2xs uppercase tracking-widest text-fg-muted">
                 <tr>
                   <th className="text-left px-4 py-3">Ticker</th>
@@ -253,6 +256,7 @@ export default function Portfolio() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}

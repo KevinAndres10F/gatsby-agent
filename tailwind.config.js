@@ -4,30 +4,29 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Backgrounds (deep charcoal with warm undertone)
+        // Tokens semánticos -> variables CSS (canales RGB para soportar /alpha).
+        // Los valores reales viven en index.css ([data-theme="dark"|"light"]).
         bg: {
-          DEFAULT: '#0a0a0c',
-          elevated: '#121215',
-          surface: '#1a1a1f',
-          border: '#2a2a31',
+          DEFAULT: 'rgb(var(--bg) / <alpha-value>)',
+          elevated: 'rgb(var(--bg-elevated) / <alpha-value>)',
+          surface: 'rgb(var(--bg-surface) / <alpha-value>)',
+          border: 'rgb(var(--bg-border) / <alpha-value>)',
         },
-        // Text
         fg: {
-          DEFAULT: '#e8e8ec',
-          muted: '#9090a0',
-          subtle: '#5a5a68',
+          DEFAULT: 'rgb(var(--fg) / <alpha-value>)',
+          muted: 'rgb(var(--fg-muted) / <alpha-value>)',
+          subtle: 'rgb(var(--fg-subtle) / <alpha-value>)',
         },
-        // Semantic
-        bull: '#22c55e',
-        bear: '#ef4444',
+        bull: 'rgb(var(--bull) / <alpha-value>)',
+        bear: 'rgb(var(--bear) / <alpha-value>)',
         amber: {
-          glow: '#fbbf24',
-          DEFAULT: '#f59e0b',
-          deep: '#d97706',
+          glow: 'rgb(var(--amber-glow) / <alpha-value>)',
+          DEFAULT: 'rgb(var(--amber) / <alpha-value>)',
+          deep: 'rgb(var(--amber-deep) / <alpha-value>)',
         },
         cyan: {
-          glow: '#22d3ee',
-          DEFAULT: '#06b6d4',
+          glow: 'rgb(var(--cyan-glow) / <alpha-value>)',
+          DEFAULT: 'rgb(var(--cyan) / <alpha-value>)',
         },
       },
       fontFamily: {

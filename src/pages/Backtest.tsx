@@ -260,7 +260,8 @@ export default function Backtest() {
             {loadingHistory ? 'Cargando…' : 'Click "Refrescar" para ver runs anteriores.'}
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="table-scroll">
+          <table className="w-full text-sm min-w-[44rem]">
             <thead className="bg-bg-surface/50 text-2xs uppercase tracking-widest text-fg-muted">
               <tr>
                 <th className="text-left px-4 py-2.5">Run</th>
@@ -300,6 +301,7 @@ export default function Backtest() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
     </div>

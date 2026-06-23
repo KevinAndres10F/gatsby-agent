@@ -107,7 +107,8 @@ export default function Health() {
             Últimos runs
           </h2>
           <div className="panel overflow-hidden">
-            <table className="w-full text-sm">
+            <div className="table-scroll">
+            <table className="w-full text-sm min-w-[42rem]">
               <thead className="bg-bg-surface text-2xs uppercase tracking-widest text-fg-muted">
                 <tr>
                   <th className="text-left px-4 py-2.5">Función</th>
@@ -141,6 +142,7 @@ export default function Health() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </section>
       )}
