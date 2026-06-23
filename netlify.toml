@@ -23,6 +23,11 @@
   function = "update-prices"
   cron = "0 14,16,18,20 * * 1-5"
 
+# Fast movers: cada 5 min en horario de mercado. Gate interno afina 9:30-16:00 ET.
+[[scheduled.functions]]
+  function = "scan-movers"
+  cron = "*/5 13-21 * * 1-5"
+
 # End of day: close trades that hit stops/targets, snapshot equity
 [[scheduled.functions]]
   function = "end-of-day"

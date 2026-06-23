@@ -58,6 +58,7 @@ git push -u origin main
    - `supabase/seed_universe.sql` — ~120 tickers + ETFs (SPY/QQQ/XLK/XLE)
    - `supabase/migrations_v2.sql` — fase 2: benchmark, backtest, multi-usuario + RLS
    - `supabase/migrations_v3_notifications.sql` — fase 3: notificaciones (tabla `notifications` + `notification_prefs`) y columnas de riesgo en `signals`
+   - `supabase/migrations_v4_movers.sql` — fase 4: escáner de movimientos rápidos (`mover_watchlist` + `notification_prefs.channels_mover`)
 
 ### 3. Conseguir API keys gratis
 
@@ -93,6 +94,12 @@ TELEGRAM_CHAT_ID=-100123...      # chat por defecto / fallback single-user
 # Notificaciones y Risk Manager (opcionales)
 STOP_PROXIMITY_PCT=1.5           # % para avisar proximidad a stop/target
 RISK_REVIEW_MODEL=               # vacío = Opus 4.8; o claude-sonnet-4-6
+
+# Escáner de movimientos rápidos (opcional)
+MOVER_SCAN_ENABLED=true
+MOVER_VELOCITY_PCT=2             # % de aceleración para alertar
+MOVER_COOLDOWN_MIN=30            # anti-spam por ticker/dirección
+AV_HOT_THRESHOLD=5               # % para sumar movers de mercado a la watchlist
 ```
 
 4. Trigger un deploy. Las **Scheduled Functions** se registran automáticamente.
@@ -163,6 +170,7 @@ severidad mínima, horas de silencio) y se rutean por usuario. Canal actual:
 Telegram (el diseño deja listos email/in-app como adaptadores futuros).
 
 Tipos de alerta:
+- `fast_mover` — acción **subiendo/bajando rápido** intradía (`scan-movers`, ver abajo)
 - `signal_high` — señales HIGH **aprobadas por el Risk Manager** (`analyze`)
 - `digest_morning` — resumen matutino de las señales del día (`analyze`)
 - `trade_closed` — cierre por stop/target (`update-prices`)
@@ -174,6 +182,24 @@ Configura el bot con `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` (si faltan, son
 no-op silenciosos). Personaliza canales, severidad y horas de silencio por
 usuario en **Ajustes** (`/settings`); cada usuario puede registrar su propio
 `telegram_chat_id`.
+
+### Escáner de movimientos rápidos (fast movers)
+Cron `scan-movers` cada 5 min en horario de mercado (gate interno 9:30–16:00 ET).
+Detecta **aceleración** intradía y alerta al instante por Telegram (sin LLM →
+costo cero y máxima rapidez), para operar rápido.
+
+- **Velocidad**: usa la tabla `quotes` como snapshot; compara el precio actual
+  (Finnhub, tiempo real) con el del escaneo anterior (~5 min). Si
+  `|Δ%| ≥ MOVER_VELOCITY_PCT` (default 2%) en una ventana de 2–15 min, alerta.
+- **Cobertura híbrida**: escanea el universo (~120 + ETFs) **más** una watchlist
+  temporal (`mover_watchlist`) que se llena 2×/día (≈10:00 y 14:00 ET) con los
+  top gainers/losers de **todo el mercado** (Alpha Vantage) que superen
+  `AV_HOT_THRESHOLD` (default 5%) y expiran el mismo día.
+- **Anti-spam**: cooldown por ticker+dirección cada `MOVER_COOLDOWN_MIN` (default
+  30 min) vía el `dedup_key` de la capa de notificaciones.
+- **Configurable**: `MOVER_SCAN_ENABLED`, `MOVER_VELOCITY_PCT`,
+  `MOVER_COOLDOWN_MIN`, `MOVER_MIN_PRICE`, `AV_HOT_THRESHOLD`. Toggle por usuario
+  en **Ajustes** → "Movimientos rápidos".
 
 ### Risk Manager (segunda opinión multi-agente)
 Tras generar las señales, un segundo pase con **Claude Opus 4.8** actúa como
@@ -294,6 +320,7 @@ cuantitativo-agent/
 │   ├── discovery.ts                 # cron — descubre candidatos
 │   ├── analyze.ts                   # cron — LLM + señales (con cache)
 │   ├── update-prices.ts             # cron — mark-to-market + auto-close
+│   ├── scan-movers.ts               # cron 5min — alertas de movimientos rápidos
 │   ├── end-of-day.ts                # cron — equity snapshot + SPY refresh
 │   ├── backtest.ts                  # HTTP — backtesting histórico
 │   ├── api-signals.ts               # GET /api/signals

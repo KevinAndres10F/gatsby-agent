@@ -28,6 +28,7 @@ const FN_LABELS: Record<string, string> = {
   analyze: 'Analyze (6:15 ET)',
   'update-prices': 'Update Prices (cada 2h)',
   'end-of-day': 'End of Day (17:30 ET)',
+  'scan-movers': 'Fast Movers (cada 5 min)',
 };
 
 const EXPECTED_RUNS_PER_DAY: Record<string, number> = {
@@ -35,6 +36,7 @@ const EXPECTED_RUNS_PER_DAY: Record<string, number> = {
   analyze: 1,
   'update-prices': 4,
   'end-of-day': 1,
+  'scan-movers': 78, // ~cada 5 min, 9:30–16:00 ET
 };
 
 export default function Health() {

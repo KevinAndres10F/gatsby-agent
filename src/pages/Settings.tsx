@@ -13,6 +13,7 @@ interface Prefs {
   channels_trade: string[];
   channels_digest: string[];
   channels_system: string[];
+  channels_mover: string[];
   min_severity: Severity;
   quiet_start: number | null;
   quiet_end: number | null;
@@ -26,6 +27,7 @@ const DEFAULTS: Prefs = {
   channels_trade: ['telegram'],
   channels_digest: ['telegram'],
   channels_system: ['telegram'],
+  channels_mover: ['telegram'],
   min_severity: 'info',
   quiet_start: null,
   quiet_end: null,
@@ -34,6 +36,7 @@ const DEFAULTS: Prefs = {
 };
 
 const CATEGORIES: { key: keyof Prefs; label: string; desc: string }[] = [
+  { key: 'channels_mover', label: 'Movimientos rápidos', desc: 'Acciones subiendo o bajando rápido intradía (oportunidades para operar)' },
   { key: 'channels_signal', label: 'Señales HIGH', desc: 'Alertas de señales de alta convicción aprobadas por el Risk Manager' },
   { key: 'channels_trade', label: 'Trades y proximidad', desc: 'Cierres por stop/target y avisos de proximidad' },
   { key: 'channels_digest', label: 'Digests', desc: 'Resumen matutino y de cierre de mercado' },
@@ -85,6 +88,7 @@ export default function Settings() {
       channels_trade: prefs.channels_trade,
       channels_digest: prefs.channels_digest,
       channels_system: prefs.channels_system,
+      channels_mover: prefs.channels_mover,
       min_severity: prefs.min_severity,
       quiet_start: prefs.quiet_start,
       quiet_end: prefs.quiet_end,

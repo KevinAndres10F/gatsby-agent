@@ -35,6 +35,7 @@ interface Prefs {
   channels_trade: string[];
   channels_digest: string[];
   channels_system: string[];
+  channels_mover: string[];
   min_severity: Severity;
   quiet_start: number | null;
   quiet_end: number | null;
@@ -50,6 +51,7 @@ const DEFAULT_PREFS: Prefs = {
   channels_trade: ['telegram'],
   channels_digest: ['telegram'],
   channels_system: ['telegram'],
+  channels_mover: ['telegram'],
   min_severity: 'info',
   quiet_start: null,
   quiet_end: null,
@@ -63,7 +65,10 @@ function severityIcon(s: Severity): string {
   return 'ℹ️';
 }
 
-function categoryFor(type: string): 'signal' | 'trade' | 'digest' | 'system' {
+function categoryFor(
+  type: string,
+): 'signal' | 'trade' | 'digest' | 'system' | 'mover' {
+  if (type.startsWith('fast') || type.startsWith('mover')) return 'mover';
   if (type.startsWith('signal')) return 'signal';
   if (type.startsWith('trade') || type.startsWith('stop')) return 'trade';
   if (type.startsWith('digest')) return 'digest';
@@ -72,6 +77,8 @@ function categoryFor(type: string): 'signal' | 'trade' | 'digest' | 'system' {
 
 function channelsForCategory(prefs: Prefs, type: string): Channel[] {
   switch (categoryFor(type)) {
+    case 'mover':
+      return prefs.channels_mover as Channel[];
     case 'signal':
       return prefs.channels_signal as Channel[];
     case 'trade':
@@ -111,7 +118,7 @@ async function loadPrefs(
   const { data, error } = await supabase
     .from('notification_prefs')
     .select(
-      'telegram_chat_id, channels_signal, channels_trade, channels_digest, channels_system, min_severity, quiet_start, quiet_end, tz, enabled',
+      'telegram_chat_id, channels_signal, channels_trade, channels_digest, channels_system, channels_mover, min_severity, quiet_start, quiet_end, tz, enabled',
     )
     .eq('user_id', userId)
     .maybeSingle();
