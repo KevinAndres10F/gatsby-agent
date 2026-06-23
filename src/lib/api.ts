@@ -129,6 +129,41 @@ export interface BacktestRun {
   params: any;
 }
 
+export interface AppNotification {
+  id: number;
+  type: string;
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  body: string | null;
+  payload: Record<string, any> | null;
+  created_at: string;
+  read_at: string | null;
+}
+
+export interface NotificationsResponse {
+  notifications: AppNotification[];
+  unread_count: number;
+}
+
+export function getNotifications(params: {
+  limit?: number;
+  type?: string;
+  unread?: boolean;
+} = {}): Promise<NotificationsResponse> {
+  const q = new URLSearchParams();
+  if (params.limit) q.set('limit', String(params.limit));
+  if (params.type) q.set('type', params.type);
+  if (params.unread) q.set('unread', '1');
+  const qs = q.toString();
+  return apiGet<NotificationsResponse>(`notifications${qs ? `?${qs}` : ''}`);
+}
+
+export function markNotificationsRead(
+  arg: { ids: number[] } | { all: true },
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>('notifications', arg);
+}
+
 // =============== Format utils ===============
 export const fmtUsd = (v: number | null | undefined) =>
   v == null

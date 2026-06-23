@@ -181,7 +181,9 @@ Tipos de alerta:
 Configura el bot con `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` (si faltan, son
 no-op silenciosos). Personaliza canales, severidad y horas de silencio por
 usuario en **Ajustes** (`/settings`); cada usuario puede registrar su propio
-`telegram_chat_id`.
+`telegram_chat_id`. El mismo historial se ve en la web en **Alertas**
+(`/alerts`): lista filtrable por tipo, con marcar-como-leído, leyendo la tabla
+`notifications` vía `api-notifications`.
 
 ### Escáner de movimientos rápidos (fast movers)
 Cron `scan-movers` cada 5 min en horario de mercado (gate interno 9:30–16:00 ET).
@@ -324,6 +326,7 @@ cuantitativo-agent/
 │   ├── end-of-day.ts                # cron — equity snapshot + SPY refresh
 │   ├── backtest.ts                  # HTTP — backtesting histórico
 │   ├── api-signals.ts               # GET /api/signals
+│   ├── api-notifications.ts         # GET/POST /api/notifications (lista + marcar leídas)
 │   ├── api-portfolio.ts             # GET /api/portfolio (multi-user)
 │   ├── api-performance.ts           # GET /api/performance (con advanced + benchmark)
 │   ├── api-execute.ts               # POST /api/execute
@@ -348,6 +351,7 @@ cuantitativo-agent/
 │       ├── Portfolio.tsx
 │       ├── Performance.tsx          # equity + advanced + benchmark
 │       ├── Backtest.tsx             # ejecutar runs históricos
+│       ├── Alerts.tsx               # historial de notificaciones (movers, señales, etc.)
 │       ├── Settings.tsx             # preferencias de notificaciones
 │       └── Login.tsx                # email/password auth
 ├── docs/

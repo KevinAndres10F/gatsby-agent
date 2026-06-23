@@ -9,6 +9,7 @@ import {
   X,
   History,
   HeartPulse,
+  Bell,
   Settings as SettingsIcon,
   LogOut,
 } from 'lucide-react';
@@ -19,6 +20,7 @@ const items = [
   { to: '/signals', label: 'Señales', icon: Activity },
   { to: '/portfolio', label: 'Portfolio', icon: Briefcase },
   { to: '/performance', label: 'Performance', icon: TrendingUp },
+  { to: '/alerts', label: 'Alertas', icon: Bell },
   { to: '/backtest', label: 'Backtest', icon: History },
   { to: '/health', label: 'Health', icon: HeartPulse },
   { to: '/settings', label: 'Ajustes', icon: SettingsIcon },

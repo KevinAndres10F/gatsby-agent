@@ -8,6 +8,7 @@ import Performance from './pages/Performance';
 import Backtest from './pages/Backtest';
 import Health from './pages/Health';
 import Settings from './pages/Settings';
+import Alerts from './pages/Alerts';
 import Login from './pages/Login';
 import { useAuth } from './lib/auth';
 
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/backtest" element={<Backtest />} />
+            <Route path="/alerts" element={<Alerts />} />
             <Route path="/health" element={<Health />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>

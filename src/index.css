@@ -117,6 +117,17 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Cuerpo de alertas (HTML estilo Telegram: <b> <code> <a>). */
+  .alert-body code {
+    @apply num text-fg bg-bg-surface px-1 py-0.5 rounded text-2xs;
+  }
+  .alert-body a {
+    @apply text-amber-glow hover:underline;
+  }
+  .alert-body b {
+    @apply text-fg font-semibold;
+  }
+
   .grid-bg {
     background-image:
       linear-gradient(rgb(var(--bg-border) / 0.4) 1px, transparent 1px),
